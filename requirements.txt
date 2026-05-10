@@ -1,0 +1,56 @@
+# DIMO Requirements - Phase 0-1 Essential + Future Phases Commented
+
+# ============================================================================
+# PHASE 0-1: CORE ORCHESTRATION (REQUIRED)
+# ============================================================================
+
+langchain==0.1.14
+langchain-core==0.1.36
+langchain-community==0.0.33
+langgraph==0.0.36
+ollama==0.6.2
+pydantic==2.5.0
+python-dotenv==1.0.0
+requests==2.31.0
+
+# Web search tool (Phase 1-2)
+duckduckgo-search==3.9.10
+
+# ============================================================================
+# OBSERVABILITY (OPTIONAL, set LANGSMITH_API_KEY to enable)
+# ============================================================================
+
+langsmith==0.1.14
+
+# ============================================================================
+# PHASE 3: VOICE I/O (Install when starting Phase 3)
+# ============================================================================
+
+# silero-vad==5.1.1
+# faster-whisper==0.10.1
+# piper-tts==1.2.0
+# edge-tts==6.1.9
+# pyaudio==0.2.13
+# keyboard==0.13.5
+
+# ============================================================================
+# PHASE 4: MEMORY SYSTEM (Install when starting Phase 4)
+# ============================================================================
+
+# qdrant-client==2.8.0
+# sentence-transformers==2.2.2
+
+# ============================================================================
+# PHASE 5: ADVANCED TOOLS (Install when starting Phase 5)
+# ============================================================================
+
+# apscheduler==3.10.4
+# spotipy==2.23.0
+# tavily-python==0.3.4
+
+# ============================================================================
+# PHASE 6: MESSAGING (Install when starting Phase 6)
+# ============================================================================
+
+# python-telegram-bot==20.5
+# twilio==8.11.0
