@@ -1,5 +1,5 @@
 from typing import Annotated, TypedDict, Optional, List, Dict
-from langgraph.graph.message import add_messages 
+from langgraph.graph.message import add_messages  # Only used for messages channel 
 
 class DimoState(TypedDict):
     """State object for DIMO agent — complete multi-layer architecture.
@@ -43,7 +43,7 @@ class DimoState(TypedDict):
     next_tool: Optional[str]
     """Name of next tool to execute."""
     
-    tool_history: Annotated[List, add_messages]
+    tool_history: List
     """Record of all tool calls and results in this session."""
     
     tool_output: Optional[str]
@@ -58,4 +58,25 @@ class DimoState(TypedDict):
     
     error_message: Optional[str]
     """Last error, if any."""
-
+    
+    # === TOOL CHAINING (Phase 2) ===
+    tool_plan: Optional[List[str]]
+    """Planned sequence of tools to execute. E.g. ['search', 'summarize', 'write_email']."""
+    
+    tool_calls_made: List
+    """Record of tool calls made, with inputs and outputs."""
+    
+    max_iterations: int
+    """Max iterations for tool chaining to prevent infinite loops."""
+    
+    current_iteration: int
+    """Current iteration count for tool chaining."""
+    
+    planning_context: Optional[str]
+    """LLM's reasoning: 'I need to search first, then summarize'."""
+    
+    should_continue: bool
+    """Flag: should we loop again? Or is response final?"""
+    
+    loop_error_count: int
+    """Count of errors in this loop cycle. Too many = stop."""

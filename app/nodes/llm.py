@@ -29,7 +29,10 @@ def call_llm(state: DimoState) -> DimoState:
         Updated DimoState with LLM response added to messages
     """
     
-    logger.info("Calling LLM for response generation")
+    logger.info("=== LLM NODE CALLED ===")
+    logger.info(f"Messages count: {len(state.get('messages', []))}")
+    logger.info(f"Tool calls made: {len(state.get('tool_calls_made', []))}")
+    logger.info(f"Current iteration: {state.get('current_iteration')}/{state.get('max_iterations')}")
     
     try:
         client = Client(host=OLLAMA_HOST)
@@ -52,6 +55,7 @@ def call_llm(state: DimoState) -> DimoState:
         # Call LLM
         start_time = time.time()
         logger.debug(f"Prompt length: {len(prompt)} chars")
+        logger.debug(f"Full prompt:\n{prompt}")
         
         response = client.generate(
             model=LLM_MODEL,
@@ -64,11 +68,11 @@ def call_llm(state: DimoState) -> DimoState:
         # Extract response
         llm_response = response.response.strip() if response.response else "I couldn't generate a response."
         
+        logger.info(f"LLM response generated (latency: {elapsed:.2f}s, length: {len(llm_response)} chars)")
+        
         # Add to messages
         state["messages"].append(AIMessage(content=llm_response))
-        
-        logger.info(f"LLM response generated (latency: {elapsed:.2f}s)")
-        logger.debug(f"Response: {llm_response[:200]}")
+        logger.debug(f"Response preview: {llm_response[:200]}")
         
     except Exception as e:
         logger.error(f"LLM call failed: {e}")

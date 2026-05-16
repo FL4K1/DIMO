@@ -49,6 +49,7 @@ def route_intent(state: DimoState) -> DimoState:
     latest_message = state["messages"][-1]
     user_input = latest_message.content if hasattr(latest_message, 'content') else str(latest_message)
     
+    logger.info(f"=== ROUTER NODE CALLED ===")
     logger.info(f"Routing intent for input: {user_input[:100]}")
     
     try:

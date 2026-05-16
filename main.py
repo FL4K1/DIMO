@@ -42,7 +42,15 @@ def initialize_state():
         "user_profile": None,
         "session_id": None,
         "error_message": None,
+        "tool_plan": None,
+        "tool_calls_made": [],
+        "max_iterations": 5,
+        "current_iteration": 0,
+        "planning_context": None,
+        "should_continue": True,
+        "loop_error_count": 0
     }
+
 
 def main():
     """Run the DIMO CLI interface."""
@@ -103,7 +111,14 @@ def main():
             
             # Extract and display response
             if result.get("messages"):
+                logger.info(f"Total messages in result: {len(result['messages'])}")
+                
                 # Get the last message (which should be the AI response)
+                for i, msg in enumerate(result.get("messages", [])):
+                    msg_class = msg.__class__.__name__
+                    msg_preview = (msg.content if hasattr(msg, 'content') else str(msg))[:100]
+                    logger.info(f"  Message {i}: {msg_class} - {msg_preview}...")
+                
                 last_message = result["messages"][-1]
                 response = last_message.content if hasattr(last_message, 'content') else str(last_message)
                 
