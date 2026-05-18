@@ -1,5 +1,4 @@
 from typing import Optional, Callable
-
 from app.tools.search import web_search
 from app.config.logging import logger
 

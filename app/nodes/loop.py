@@ -1,4 +1,3 @@
-
 """Tool execution loop node for Phase 2 tool chaining.
 
 This node executes planned tools in a loop based on LLM decisions,
@@ -139,40 +138,37 @@ def execute_single_tool(tool_name: str, args: dict) -> str:
 
 
 def execute_tool_loop(state: DimoState) -> dict:
-    """Execute tools in a loop based on LLM decisions.
-    
-    Implements the ReAct loop:
-    1. Ask LLM what to do next
-    2. Execute the tool
-    3. Record results
-    4. Repeat until done or max iterations reached
-    
-    Args:
-        state: Current DimoState
-        
-    Returns:
-        Updated state with tool execution results
-    """
-    
-    logger.info("=== LOOP NODE CALLED ===")
-    logger.info(f"Starting tool execution loop (max iterations: {state['max_iterations']})")
-    logger.info(f"Tool plan: {state.get('tool_plan', [])}")
-    
+    """Execute tools and yield results as they complete"""
+
     while state["current_iteration"] < state["max_iterations"]:
-        
-        # 1. Ask LLM what's next
         next_action = ask_llm_next_action(state)
-        
-        # 2. Check if done
-        if next_action.get("next_tool") == "DONE":
-            logger.info("LLM decided all tasks are complete")
-            state["should_continue"] = False
+
+        # ── Guard: LLM sometimes returns a JSON array instead of an object ──
+        # extract_json_from_text hands back whatever the parser found, which
+        # may be a list like [{"next_tool": ...}].  Calling .get() on a list
+        # raises AttributeError, so we unwrap single-element arrays here.
+        if isinstance(next_action, list):
+            if next_action:
+                next_action = next_action[0]
+                logger.debug("Unwrapped list response from LLM: using index 0.")
+            else:
+                logger.error("LLM returned empty list — treating as DONE.")
+                break
+
+        if not isinstance(next_action, dict):
+            logger.error(
+                "Unexpected next_action type %s — treating as DONE.",
+                type(next_action).__name__,
+            )
             break
-        
+
+        if next_action.get("next_tool") == "DONE":
+            break
+
         tool_name = next_action.get("next_tool")
         args = next_action.get("args", {})
         reasoning = next_action.get("reasoning", "")
-        
+
         logger.info(f"LLM decided to execute '{tool_name}': {reasoning}")
 
         # Validate arguments first before executing tool
@@ -188,22 +184,25 @@ def execute_tool_loop(state: DimoState) -> dict:
                 "reasoning": reasoning
             })
             continue  # Skip to next iteration
-        
+
         # 3. Execute the tool
         result = execute_single_tool(tool_name, args)
-        
-        # 4. Record in tool_calls_made
+
+        # IMMEDIATELY record (don't wait for synthesis)
         state["tool_calls_made"].append({
             "tool": tool_name,
-            "args": args,
             "result": result,
+            "args": args,
             "reasoning": reasoning
         })
-        
+
+        # TODO: Emit progress update or return partial state
+        # This allows caller to display result immediately
+
         # 5. Increment iteration
         state["current_iteration"] += 1
         logger.info(f"Iteration {state['current_iteration']} / {state['max_iterations']}")
-        
+
         # 6. Check for repeated errors
         if "Error" in result or "error" in result.lower():
             state["loop_error_count"] += 1
@@ -212,12 +211,13 @@ def execute_tool_loop(state: DimoState) -> dict:
                 break
         else:
             state["loop_error_count"] = 0  # Reset on success
-    
+
     if state["current_iteration"] >= state["max_iterations"]:
         logger.warning(f"Reached max iterations limit ({state['max_iterations']})")
-    
+
     logger.info(f"Tool execution loop completed. Executed {len(state['tool_calls_made'])} tools")
     return state
+
 
 
 

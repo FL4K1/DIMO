@@ -23,15 +23,19 @@ duckduckgo-search==3.9.10
 langsmith==0.1.14
 
 # ============================================================================
-# PHASE 3: VOICE I/O (Install when starting Phase 3)
+# PHASE 3: VOICE I/O
 # ============================================================================
 
+# NOTE: silero-vad reserved for Phase 3.5 VAD integration
 # silero-vad==5.1.1
-# faster-whisper==0.10.1
-# piper-tts==1.2.0
-# edge-tts==6.1.9
-# pyaudio==0.2.13
-# keyboard==0.13.5
+faster-whisper
+piper-tts
+edge-tts
+keyboard
+soundfile
+numpy
+# pyaudio installed separately via: pip install pyaudio
+# (Windows binary wheel — see INSTALL_NOTES below)
 
 # ============================================================================
 # PHASE 4: MEMORY SYSTEM (Install when starting Phase 4)

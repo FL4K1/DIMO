@@ -13,21 +13,20 @@ from app.config.logging import logger
 
 
 def filter_tool_results(tool_calls_made: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
-    """Separate successful results from errors.
+    """Separate successful results from error results.
     
     Args:
-        tool_calls_made: List of tool execution records
+        tool_calls_made: List of tool call records
         
     Returns:
-        Tuple of (successful_results, errors)
+        Tuple of (successful_results, error_results)
     """
     successful = []
     errors = []
     
     for call in tool_calls_made:
-        # Check if result contains error
         result = call.get("result", "")
-        if isinstance(result, str) and ("ERROR" in result or "error" in result):
+        if "ERROR" in str(result) or "error" in str(result):
             errors.append(call)
         else:
             successful.append(call)
@@ -35,35 +34,33 @@ def filter_tool_results(tool_calls_made: List[Dict]) -> Tuple[List[Dict], List[D
     return successful, errors
 
 
-def format_tool_result(tool_name: str, result: str, index: int = 1) -> str:
-    """Format a single tool result as readable text.
+def format_tool_result(tool_name: str, result: str, index: int) -> str:
+    """Format a single tool result for display.
     
     Args:
         tool_name: Name of the tool
-        result: Result from tool execution
-        index: Position in sequence (for numbering)
+        result: Result string from tool
+        index: Index number for this result
         
     Returns:
-        Formatted text block
+        Formatted result string
     """
-    # Truncate very long results
+    # Tool-specific formatting
+    if tool_name == "web_search":
+        prefix = "Search Results"
+    elif tool_name == "summarize":
+        prefix = "Summary"
+    else:
+        prefix = f"{tool_name.title()}"
+    
+    # Truncate long results
     max_length = 500
     if len(result) > max_length:
         result = result[:max_length] + "..."
     
-    # Format based on tool type
-    if tool_name == "web_search":
-        return f"{index}. Search Results:\n{result}\n"
-    
-    elif tool_name == "summarize":
-        return f"{index}. Summary:\n{result}\n"
-    
-    else:
-        # Generic tool formatting
-        return f"{index}. {tool_name.replace('_', ' ').title()}:\n{result}\n"
+    return f"{index}. {prefix}:\n{result}\n"
 
-
-def synthesize_response(state: DimoState) -> dict:
+async def synthesize_response(state: DimoState) -> dict:
     """Combine tool results into natural language response.
     
     Process:
@@ -173,3 +170,24 @@ def extract_tool_summary(state: DimoState) -> str:
         return "No tools executed"
     
     return ", ".join(sorted(tools_used))
+
+
+def synthesize_response_streaming(state: DimoState):
+    """Yield formatted results as they're added to tool_calls_made"""
+    
+    # Format header
+    yield "Based on tools executed:\n\n"
+    
+    # Format each result as it appears
+    for i, result in enumerate(state["tool_calls_made"], 1):
+        formatted = format_tool_result(
+            result["tool"], 
+            result["result"], 
+            i
+        )
+        yield formatted
+        
+        # Let UI update between results (doesn't block)
+    
+    # Format footer
+    yield "\n---\nExecution complete."
