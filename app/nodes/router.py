@@ -5,6 +5,7 @@ Routes user input to appropriate handler based on intent classification.
 
 import os
 from dotenv import load_dotenv
+# pyrefly: ignore [missing-import]
 from ollama import Client
 from app.graph.state import DimoState
 import logging
@@ -53,18 +54,17 @@ def route_intent(state: DimoState) -> DimoState:
     logger.info(f"Routing intent for input: {user_input[:100]}")
     
     try:
-        client = Client(host=OLLAMA_HOST)
-        
-        # Create prompt
-        prompt = ROUTER_PROMPT.format(input=user_input)
-        
-        # Call router model
-        response = client.generate(
-            model=ROUTER_MODEL,
-            prompt=prompt,
-            stream=False
-        )
-        
+        with Client(host=OLLAMA_HOST) as client:
+            # Create prompt
+            prompt = ROUTER_PROMPT.format(input=user_input)
+
+            # Call router model
+            response = client.generate(
+                model=ROUTER_MODEL,
+                prompt=prompt,
+                stream=False
+            )
+
         # Extract classification
         classification = response.response.strip().lower().split()[0]
         

@@ -7,7 +7,9 @@ implementing the ReAct pattern: Reason → Act → Loop.
 import json
 import os
 from dotenv import load_dotenv
+# pyrefly: ignore [missing-import]
 from ollama import Client
+# pyrefly: ignore [missing-import]
 from langchain_core.messages import HumanMessage, AIMessage
 
 from app.graph.state import DimoState
@@ -72,25 +74,25 @@ If next_tool is DONE, args can be empty: {{}}.
 """
     
     logger.info("Asking LLM what tool to execute next")
-    
+
     try:
-        client = Client(host=OLLAMA_HOST)
-        response = client.generate(
-            model=LLM_MODEL,
-            prompt=loop_prompt,
-            stream=False
-        )
-        raw_response = response.get("response", "").strip()
+        with Client(host=OLLAMA_HOST) as client:
+            response = client.generate(
+                model=LLM_MODEL,
+                prompt=loop_prompt,
+                stream=False
+            )
+        raw_response = response.response.strip() if response.response else ""
         logger.debug(f"LLM raw response: {raw_response[:200]}")
-        
+
         # Parse JSON response using robust parser
         success, next_action = extract_json_from_text(raw_response)
         if not success:
             logger.error(f"Failed to extract JSON from LLM response: {raw_response}")
             return {"next_tool": "DONE", "args": {}, "reasoning": "JSON parse error"}
-        
+
         return next_action
-        
+
     except Exception as e:
         logger.error(f"LLM call failed: {e}")
         return {"next_tool": "DONE", "args": {}, "reasoning": f"LLM error: {str(e)}"}
@@ -278,8 +280,6 @@ def validate_tool_args(tool_name: str, args: dict) -> tuple[bool, str]:
                 f"Field '{field_name}' expected "
                 f"{expected_type_name}, got {type(field_value).__name__}"
             )
-    
-    return True, "Arguments valid"
     
     return True, "Arguments valid"
 

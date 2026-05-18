@@ -8,7 +8,8 @@ import json
 import os
 import traceback
 from dotenv import load_dotenv
-from ollama import Client
+# pyrefly: ignore [missing-import]
+from ollama import Client  # Reserved for Phase 2.5 LLM-assisted recovery
 
 from app.graph.state import DimoState
 from app.config.logging import logger

@@ -7,7 +7,9 @@ and generates responses.
 import time
 import os
 from dotenv import load_dotenv
+# pyrefly: ignore [missing-import]
 from ollama import Client
+# pyrefly: ignore [missing-import]
 from langchain_core.messages import AIMessage
 from app.graph.state import DimoState
 import logging
@@ -35,8 +37,6 @@ def call_llm(state: DimoState) -> DimoState:
     logger.info(f"Current iteration: {state.get('current_iteration')}/{state.get('max_iterations')}")
     
     try:
-        client = Client(host=OLLAMA_HOST)
-        
         # Format conversation history for prompt
         messages = state.get("messages", [])
         if not messages:
@@ -56,12 +56,13 @@ def call_llm(state: DimoState) -> DimoState:
         start_time = time.time()
         logger.debug(f"Prompt length: {len(prompt)} chars")
         logger.debug(f"Full prompt:\n{prompt}")
-        
-        response = client.generate(
-            model=LLM_MODEL,
-            prompt=prompt,
-            stream=False
-        )
+
+        with Client(host=OLLAMA_HOST) as client:
+            response = client.generate(
+                model=LLM_MODEL,
+                prompt=prompt,
+                stream=False
+            )
         
         elapsed = time.time() - start_time
         

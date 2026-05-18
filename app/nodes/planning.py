@@ -9,6 +9,7 @@ import os
 import time
 import logging
 from dotenv import load_dotenv
+# pyrefly: ignore [missing-import]
 from ollama import Client
 
 from app.graph.state import DimoState
@@ -73,16 +74,16 @@ RESPOND IN THIS EXACT JSON FORMAT:
 """
     
     logger.info(f"Planning tools for intent: {current_intent}")
-    
+
     # === 3. Call LLM ===
     try:
-        client = Client(host=OLLAMA_HOST)
-        response = client.generate(
-            model=LLM_MODEL,
-            prompt=planning_prompt,
-            stream=False
-        )
-        raw_output = response.get("response", "").strip()
+        with Client(host=OLLAMA_HOST) as client:
+            response = client.generate(
+                model=LLM_MODEL,
+                prompt=planning_prompt,
+                stream=False
+            )
+        raw_output = response.response.strip() if response.response else "{\"tools\": []}"
     except Exception as e:
         logger.error(f"LLM call failed: {e}")
         raw_output = '{"tools": []}'
@@ -109,14 +110,5 @@ RESPOND IN THIS EXACT JSON FORMAT:
     
     logger.info(f"Planned tools: {tool_plan}")
     logger.debug(f"Planning reasoning: {reasoning}")
-    
+
     return state
-
-
-
-
-
-
-    
-
-

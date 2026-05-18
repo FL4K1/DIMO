@@ -6,6 +6,7 @@ Formats raw tool outputs, handles errors, and creates readable summaries.
 
 import json
 from typing import List, Dict, Tuple
+# pyrefly: ignore [missing-import]
 from langchain_core.messages import AIMessage
 
 from app.graph.state import DimoState
@@ -60,9 +61,9 @@ def format_tool_result(tool_name: str, result: str, index: int) -> str:
     
     return f"{index}. {prefix}:\n{result}\n"
 
-async def synthesize_response(state: DimoState) -> dict:
+def synthesize_response(state: DimoState) -> dict:
     """Combine tool results into natural language response.
-    
+
     Process:
     1. Extract tool_calls_made from state
     2. Separate successful results from errors
@@ -70,10 +71,14 @@ async def synthesize_response(state: DimoState) -> dict:
     4. Add metadata (tools used, iteration info)
     5. Create final response message
     6. Update state with synthesized response
-    
+
+    Note: This is a synchronous function. LangGraph supports async nodes
+    but the rest of the DIMO graph is sync, so async here would return an
+    unawaited coroutine and silently never execute.
+
     Args:
         state: Current DimoState with tool_calls_made
-        
+
     Returns:
         Updated state with response message added
     """

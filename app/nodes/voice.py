@@ -73,6 +73,7 @@ except ImportError:
 
 try:
     import asyncio
+    # pyrefly: ignore [missing-import]
     import edge_tts
     EDGE_TTS_AVAILABLE = True
 except ImportError:

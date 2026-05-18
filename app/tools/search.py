@@ -1,7 +1,9 @@
 """Web search tool using DuckDuckGo."""
 
+# pyrefly: ignore [missing-import]
 from duckduckgo_search import DDGS
 import logging
+
 
 logger = logging.getLogger("dimo")
 
