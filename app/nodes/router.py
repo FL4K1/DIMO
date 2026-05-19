@@ -22,10 +22,26 @@ ROUTER_PROMPT = """You are a routing classifier for an AI assistant named DIMO.
 Your task: Classify the user's intent into ONE category.
 
 Categories:
-- chat: General conversation, questions, discussion
-- search: User wants information from the web
-- tool: User wants to perform an action (open app, set reminder, etc)
-- memory: User wants to remember or recall facts
+- chat: General conversation, greetings, questions, opinions, preferences,
+        and personal instructions like "call me X" or "address me as Y".
+        Most messages belong here.
+- search: User explicitly wants live web information, news, or facts that
+          require an internet lookup. Example: "search for...", "look up...",
+          "what's the latest on...", "find me articles about..."
+- tool: User wants to trigger a concrete system action like opening an app,
+        setting a timer, controlling music, or sending a message.
+        Example: "open Spotify", "set a reminder", "send an email".
+- memory: User wants DIMO to remember or recall a specific fact.
+          Example: "remember that I...", "what did I tell you about..."
+
+IMPORTANT — common mistakes to avoid:
+  "I want you to call me Sir"   → chat  (not tool, not memory)
+  "address me as Doctor"        → chat
+  "how are you"                 → chat
+  "what is 2+2"                 → chat
+  "search for Python tutorials" → search
+  "open Chrome"                 → tool
+  "remind me at 5pm"            → tool
 
 User input: {input}
 

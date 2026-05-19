@@ -1,7 +1,10 @@
-"""Web search tool using DuckDuckGo."""
+"""Web search tool using DuckDuckGo (ddgs)."""
 
 # pyrefly: ignore [missing-import]
-from duckduckgo_search import DDGS
+try:
+    from ddgs import DDGS
+except ImportError:
+    from duckduckgo_search import DDGS  # fallback for older installs
 import logging
 
 

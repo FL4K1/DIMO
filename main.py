@@ -9,6 +9,10 @@ Tech Stack:
 - Voice: Faster-Whisper + Piper TTS (Phase 3)
 - Tools: Web search + advanced tools (Phase 5)
 
+Fast Path:
+- Simple chat / greetings / quick Q&A → llama3.2:3b, streaming, no graph
+- Complex / tool / search requests → full LangGraph pipeline
+
 Usage:
     python main.py              # Text CLI mode
     python main.py --voice      # Voice I/O mode (requires microphone)
@@ -16,6 +20,7 @@ Usage:
 """
 
 import os
+import re
 import sys
 import argparse
 from dotenv import load_dotenv
@@ -30,6 +35,7 @@ from langchain_core.messages import HumanMessage
 from app.graph.graph import build_graph
 from app.config.logging import logger
 from app.config.models import verify_models
+from app.nodes.llm import fast_chat_response, set_streaming_mode  # fast path + streaming
 from app.nodes.voice import (
     record_audio,
     record_audio_push_to_talk,
@@ -71,6 +77,47 @@ def initialize_state():
     }
 
 
+# ---------------------------------------------------------------------------
+# Fast-path heuristic
+# ---------------------------------------------------------------------------
+
+# Keywords that signal the user needs a tool, search, or complex reasoning.
+# If ANY of these appear, we skip the fast path and run the full graph.
+_TOOL_KEYWORDS = re.compile(
+    r"\b("
+    r"search|find|look up|google|lookup|"
+    r"weather|forecast|temperature|"
+    r"news|headlines|latest|"
+    r"open|launch|start|run|execute|"
+    r"remind|reminder|alarm|timer|schedule|"
+    r"calculate|compute|solve|convert|"
+    r"play|spotify|music|pause|skip|"
+    r"email|send|message|notify|"
+    r"file|read|write|save|create|"
+    r"screenshot|clipboard|copy|paste|"
+    r"install|update|download"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def is_simple_chat(text: str) -> bool:
+    """Heuristic: decide if a message is safe to handle via the fast path.
+
+    Returns True when the message is short and contains no tool/search
+    keywords — i.e., it's plain conversation that doesn't need the graph.
+    """
+    # Long messages likely need reasoning / tool use
+    if len(text) > 150:
+        return False
+    # Any tool/action keyword → full graph
+    if _TOOL_KEYWORDS.search(text):
+        return False
+    # Question marks alone don't disqualify — "how are you?" is still fast
+    return True
+
+
+
 def main_text():
     """Run the DIMO CLI text interface."""
     
@@ -86,24 +133,31 @@ def main_text():
     # Verify models are available
     print("Verifying local AI stack...", end=" ", flush=True)
     if not verify_models():
-        print("✗ FAILED\n")
-        print("✗ Error: Required models not available in Ollama")
+        print("\u2717 FAILED\n")
+        print("\u2717 Error: Required models not available in Ollama")
         print("  Run: ollama pull llama3:8b llama3.2:3b")
         logger.error("Model verification failed")
         return
-    print("✓")
+    print("\u2713")
     
     try:
         # Build graph
         print("Building graph...", end=" ", flush=True)
         graph = build_graph()
-        print("✓\n")
+        print("\u2713\n")
         
     except Exception as e:
-        print(f"✗ Failed to build graph: {e}")
+        print(f"\u2717 Failed to build graph: {e}")
         logger.error(f"Graph build failed: {e}")
         return
     
+    # Conversation history for fast-path multi-turn context
+    # Each entry is a (user_text, assistant_text) tuple
+    fast_history: list[tuple[str, str]] = []
+
+    # Enable streaming — tokens print to terminal as they arrive
+    set_streaming_mode(True)
+
     # Main conversation loop
     while True:
         try:
@@ -118,25 +172,50 @@ def main_text():
                 break
             
             logger.info(f"Processing user input: {user_input}")
+
+            # ------------------------------------------------------------------
+            # FAST PATH — simple chat: small model, streaming, no graph
+            # ------------------------------------------------------------------
+            if is_simple_chat(user_input):
+                logger.info("[FAST PATH] Simple chat detected — skipping graph")
+                response = fast_chat_response(
+                    user_input,
+                    history=fast_history,
+                    print_stream=True,
+                )
+                # Keep last 10 turns of fast-path history
+                fast_history.append((user_input, response))
+                if len(fast_history) > 10:
+                    fast_history.pop(0)
+                print()  # blank line separator
+                continue
+
+            # ------------------------------------------------------------------
+            # FULL PATH — tool use / search / complex reasoning: full graph
+            # ------------------------------------------------------------------
+            logger.info("[FULL PATH] Complex query detected — running graph")
+            print("\n[Thinking...]")
             
             # Prepare state
             state = initialize_state()
             state["messages"] = [HumanMessage(content=user_input)]
             
-            # Execute graph
-            print("\nProcessing...", end=" ", flush=True)
+            # Execute graph (call_llm streams tokens to terminal during invoke)
             result = graph.invoke(state)
-            print("\n")
+            print()  # blank line after streamed response
             
-            # Extract and display response
+            # Extract response for history (already printed by streaming)
             if result.get("messages"):
                 logger.info(f"Total messages in result: {len(result['messages'])}")
                 
                 last_message = result["messages"][-1]
                 response = last_message.content if hasattr(last_message, 'content') else str(last_message)
-                
-                print(f"DIMO: {response}\n")
                 logger.info(f"Response generated: {response[:200]}")
+
+                # Carry full-path turns into fast-path history
+                fast_history.append((user_input, response))
+                if len(fast_history) > 10:
+                    fast_history.pop(0)
             else:
                 print("DIMO: I couldn't generate a response.\n")
                 logger.warning("No response generated")
@@ -147,8 +226,9 @@ def main_text():
             break
         
         except Exception as e:
-            print(f"\n✗ Error: {e}\n")
+            print(f"\n\u2717 Error: {e}\n")
             logger.error(f"Conversation error: {e}", exc_info=True)
+
 
 
 def main_voice():
@@ -234,6 +314,13 @@ def main_voice():
         print("  Tip: Say 'exit' to quit\n")
         print("  Install keyboard library for PTT: pip install keyboard\n")
     
+    # Conversation history for fast-path multi-turn context in voice mode
+    fast_history: list[tuple[str, str]] = []
+
+    # Enable streaming - tokens print to terminal as they arrive,
+    # then TTS speaks the collected full response.
+    set_streaming_mode(True)
+
     # Main voice loop
     while True:
         try:
@@ -269,34 +356,62 @@ def main_voice():
                 print("\nGoodbye!\n")
                 logger.info("User exited via voice")
                 break
-            
+
+            # ------------------------------------------------------------------
+            # FAST PATH — simple chat: small model, no graph, then TTS
+            # ------------------------------------------------------------------
+            if is_simple_chat(user_text):
+                logger.info("[FAST PATH] Simple voice query - skipping graph")
+                # Stream text to screen, then speak it
+                response = fast_chat_response(
+                    user_text,
+                    history=fast_history,
+                    print_stream=True,   # stream word-by-word to terminal too
+                )
+                logger.info(f"Fast response: {response[:200]}")
+
+                fast_history.append((user_text, response))
+                if len(fast_history) > 10:
+                    fast_history.pop(0)
+
+                print("\n[Speaking...]", end=" ", flush=True)
+                success = stream_voice_response(response)
+                print("done\n" if success else "failed\n")
+                continue
+
+            # ------------------------------------------------------------------
+            # FULL PATH - tool use / search / complex reasoning: full graph
+            # ------------------------------------------------------------------
+            logger.info("[FULL PATH] Complex voice query - running graph")
+            print("\n[Thinking...] ", flush=True)
+
             # Prepare state
             state = initialize_state()
             state["messages"] = [HumanMessage(content=user_text)]
-            
-            # Process through graph
-            print("🧠 Processing...", end=" ", flush=True)
+
+            # Process through graph (call_llm streams tokens to terminal)
             result = graph.invoke(state)
-            print("✓")
-            
-            # Extract response
+            print()  # blank line after streamed output
+
+            # Extract response for TTS (already printed by streaming)
             if result.get("messages"):
                 last_message = result["messages"][-1]
                 response = last_message.content if hasattr(last_message, 'content') else str(last_message)
-                
-                print(f"\n🤖 DIMO: {response}\n")
                 logger.info(f"Generated response: {response[:200]}")
-                
-                # Convert response to speech and stream
-                print("🔊 Speaking...", end=" ", flush=True)
+
+                fast_history.append((user_text, response))
+                if len(fast_history) > 10:
+                    fast_history.pop(0)
+
+                # Speak the collected response
+                print("[Speaking...]", end=" ", flush=True)
                 success = stream_voice_response(response)
-                
                 if success:
-                    print("✓\n")
+                    print("done\n")
                 else:
-                    print("✗ (audio playback may have failed)\n")
+                    print("failed\n")
             else:
-                print("✗ No response generated\n")
+                print("[!] No response generated\n")
                 logger.warning("No response from graph")
         
         except KeyboardInterrupt:

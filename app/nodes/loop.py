@@ -177,15 +177,25 @@ def execute_tool_loop(state: DimoState) -> dict:
         is_valid, validation_error = validate_tool_args(tool_name, args)
         if not is_valid:
             logger.error(f"Argument validation failed: {validation_error}")
-            # Record validation error and skip this tool
             state["loop_error_count"] += 1
+            state["current_iteration"] += 1  # FIX: count every failed attempt toward the limit
             state["tool_calls_made"].append({
                 "tool": tool_name,
                 "args": args,
                 "result": f"ERROR: {validation_error}",
                 "reasoning": reasoning
             })
-            continue  # Skip to next iteration
+            # Secondary guard: same non-existent tool chosen 3 times → give up immediately
+            consecutive_same = sum(
+                1 for c in state["tool_calls_made"][-3:]
+                if c.get("tool") == tool_name and "ERROR" in str(c.get("result", ""))
+            )
+            if consecutive_same >= 3:
+                logger.error(
+                    f"Tool '{tool_name}' failed validation 3 times in a row — stopping loop"
+                )
+                break
+            continue
 
         # 3. Execute the tool
         result = execute_single_tool(tool_name, args)
