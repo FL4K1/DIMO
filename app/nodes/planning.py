@@ -42,7 +42,11 @@ def plan_tools(state: DimoState) -> dict:
     
     # === 1. Extract user message and intent ===
     user_message = state.get("messages", [])[-1].content if state.get("messages") else "No message"
-    current_intent = state.get("current_intent") or "unknown"
+    current_intent = (
+        state.get("current_intent")
+        or state.get("router_result")
+        or "unknown"
+    )
 
     # === 2. Build prompt with tool catalog ===
     # Format available tools from registry
@@ -61,10 +65,12 @@ USER INTENT: {current_intent}
 USER REQUEST:
 "{user_message}"
 
-RULES:
-1. Only recommend tools that are relevant to the request
-2. Return ONLY valid JSON, no other text
-3. If no tools are needed, return empty list
+CRITICAL RULES:
+1. If the user wants to open a local desktop application (e.g. Notepad, Calculator, Explorer), you MUST use `open_app`. Do NOT use `open_url` or `web_search`.
+2. Do NOT automatically fallback to `web_search` if a tool fails unless the user explicitly requested information retrieval.
+3. Only recommend tools that are strictly relevant to the request.
+4. Return ONLY valid JSON, no other text.
+5. If no tools are needed, return empty list.
 
 RESPOND IN THIS EXACT JSON FORMAT:
 {{
@@ -77,12 +83,12 @@ RESPOND IN THIS EXACT JSON FORMAT:
 
     # === 3. Call LLM ===
     try:
-        with Client(host=OLLAMA_HOST) as client:
-            response = client.generate(
-                model=LLM_MODEL,
-                prompt=planning_prompt,
-                stream=False
-            )
+        client = Client(host=OLLAMA_HOST)
+        response = client.generate(
+            model=LLM_MODEL,
+            prompt=planning_prompt,
+            stream=False
+        )
         raw_output = response.response.strip() if response.response else "{\"tools\": []}"
     except Exception as e:
         logger.error(f"LLM call failed: {e}")

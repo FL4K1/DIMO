@@ -19,18 +19,46 @@ Usage:
     python main.py --help       # Show options
 """
 
+import io
 import os
 import re
 import sys
+import atexit
 import argparse
 from dotenv import load_dotenv
+
+# ── Force UTF-8 on Windows stdout so print() can handle ✓ ✗ → etc. ──────────
+# PowerShell / cmd default to cp1252 which cannot encode those characters.
+if hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(
+        sys.stdout.buffer,
+        encoding="utf-8",
+        errors="replace",
+        line_buffering=True,
+    )
+if hasattr(sys.stderr, "buffer"):
+    sys.stderr = io.TextIOWrapper(
+        sys.stderr.buffer,
+        encoding="utf-8",
+        errors="replace",
+        line_buffering=True,
+    )
 
 # Initialize configuration EARLY (before building graph)
 load_dotenv()
 
+# ── Graceful browser shutdown on exit ─────────────────────────────────────────
+# Register before anything else so it fires even on early exits.
+try:
+    from app.browser.browser_manager import browser_manager as _browser_manager
+    atexit.register(_browser_manager.shutdown)
+except ImportError:
+    pass  # playwright not installed — browser tools will report this gracefully
+
 # Initialize tracing (optional, requires LANGSMITH_API_KEY)
 from app.config import tracing
 
+# pyrefly: ignore [missing-import]
 from langchain_core.messages import HumanMessage
 from app.graph.graph import build_graph
 from app.config.logging import logger
@@ -88,14 +116,15 @@ _TOOL_KEYWORDS = re.compile(
     r"search|find|look up|google|lookup|"
     r"weather|forecast|temperature|"
     r"news|headlines|latest|"
-    r"open|launch|start|run|execute|"
+    r"open|launch|start|run|execute|app|desktop|system|windows|"
     r"remind|reminder|alarm|timer|schedule|"
     r"calculate|compute|solve|convert|"
     r"play|spotify|music|pause|skip|"
-    r"email|send|message|notify|"
+    r"email|send|message|notify|whatsapp|"
     r"file|read|write|save|create|"
     r"screenshot|clipboard|copy|paste|"
-    r"install|update|download"
+    r"install|update|download|"
+    r"ask|gemini|chatgpt|gpt"
     r")\b",
     re.IGNORECASE,
 )
@@ -248,51 +277,51 @@ def main_voice():
     devices = check_audio_devices()
     
     if not devices["whisper_available"]:
-        print("\n✗ FAILED\n")
-        print("✗ Faster-Whisper not installed")
+        print("\n\u2717 FAILED\n")
+        print("\u2717 Faster-Whisper not installed")
         print("  Run: pip install faster-whisper")
         return
     
     if not devices["piper_available"]:
-        print("\n✗ FAILED\n")
-        print("✗ Piper TTS not installed")
+        print("\n\u2717 FAILED\n")
+        print("\u2717 Piper TTS not installed")
         print("  Run: pip install piper-tts")
         return
     
     if not devices["pyaudio_available"]:
-        print("\n✗ FAILED\n")
-        print("✗ PyAudio not installed")
+        print("\n\u2717 FAILED\n")
+        print("\u2717 PyAudio not installed")
         print("  Run: pip install pyaudio")
         return
     
     if not devices["input_devices"]:
-        print("\n✗ FAILED\n")
-        print("✗ No microphone detected")
+        print("\n\u2717 FAILED\n")
+        print("\u2717 No microphone detected")
         print("  Check: Audio device is connected and recognized")
         return
     
-    print("✓")
+    print("\u2713")
     print(f"  Microphones: {len(devices['input_devices'])}")
     print(f"  Speakers: {len(devices['output_devices'])}\n")
     
     # Verify AI models
     print("Verifying AI models...", end=" ", flush=True)
     if not verify_models():
-        print("✗ FAILED\n")
-        print("✗ Error: Required models not available in Ollama")
+        print("\u2717 FAILED\n")
+        print("\u2717 Error: Required models not available in Ollama")
         print("  Run: ollama pull llama3:8b llama3.2:3b")
         logger.error("Model verification failed")
         return
-    print("✓")
+    print("\u2713")
     
     try:
         # Build graph
         print("Building graph...", end=" ", flush=True)
         graph = build_graph()
-        print("✓\n")
+        print("\u2713\n")
         
     except Exception as e:
-        print(f"✗ Failed to build graph: {e}")
+        print(f"\u2717 Failed to build graph: {e}")
         logger.error(f"Graph build failed: {e}")
         return
     
@@ -300,10 +329,10 @@ def main_voice():
     print("Loading Whisper model (first time is slow)...", end=" ", flush=True)
     whisper_model = initialize_whisper()
     if whisper_model is None:
-        print("✗ FAILED")
+        print("\u2717 FAILED")
         logger.error("Could not initialize Whisper")
         return
-    print("✓\n")
+    print("\u2713\n")
     
     print("Ready for voice input!")
     if KEYBOARD_AVAILABLE:
@@ -345,7 +374,7 @@ def main_voice():
             user_text = process_voice_input(audio_data, whisper_model)
             
             if user_text.startswith("ERROR"):
-                print(f"\n✗ {user_text}\n")
+                print(f"\n\u2717 {user_text}\n")
                 continue
             
             print(f"\n\n📝 You said: {user_text}\n")
@@ -420,7 +449,7 @@ def main_voice():
             break
         
         except Exception as e:
-            print(f"\n✗ Error: {e}\n")
+            print(f"\n\u2717 Error: {e}\n")
             logger.error(f"Voice conversation error: {e}", exc_info=True)
 
 

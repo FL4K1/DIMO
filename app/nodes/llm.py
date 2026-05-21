@@ -93,20 +93,20 @@ def fast_chat_response(
 
     try:
         full_response = ""
-        with Client(host=OLLAMA_HOST) as client:
-            stream = client.generate(
-                model=SMALL_MODEL,
-                prompt=prompt,
-                stream=True,
-                options={"temperature": 0.7, "num_predict": 512},
-            )
+        client = Client(host=OLLAMA_HOST)
+        stream = client.generate(
+            model=SMALL_MODEL,
+            prompt=prompt,
+            stream=True,
+            options={"temperature": 0.7, "num_predict": 512},
+        )
+        if print_stream:
+            print("\nDIMO: ", end="", flush=True)
+        for chunk in stream:
+            token = chunk.response or ""
             if print_stream:
-                print("\nDIMO: ", end="", flush=True)
-            for chunk in stream:
-                token = chunk.response or ""
-                if print_stream:
-                    print(token, end="", flush=True)
-                full_response += token
+                print(token, end="", flush=True)
+            full_response += token
         if print_stream:
             print()  # final newline
 
@@ -149,12 +149,55 @@ def call_llm(state: DimoState) -> DimoState:
             logger.warning("No messages to process")
             return state
 
-        # Build conversation context
-        conversation = []
+        # ── System preamble ───────────────────────────────────────────────
+        system = (
+            "You are DIMO, a helpful AI assistant. "
+            "Give direct, concise responses. "
+            "CRITICAL: Never claim to have performed an action (like sending a message or playing music) "
+            "UNLESS you see explicit confirmation in the TOOL RESULTS with success=True. "
+            "If no tools were run, or a tool failed, clearly inform the user that the action was not performed."
+        )
+
+        # ── Build conversation context ────────────────────────────────────
+        conversation = [system, ""]
         for msg in messages:
             role = "User" if msg.__class__.__name__ == "HumanMessage" else "Assistant"
             content = msg.content if hasattr(msg, 'content') else str(msg)
             conversation.append(f"{role}: {content}")
+
+        # ── Add intent and planning context if available ────────────────
+        planning_context = state.get("planning_context")
+        current_intent = state.get("current_intent") or state.get("router_result")
+        if current_intent:
+            conversation.append(f"\nDETECTED INTENT: {current_intent}")
+        if planning_context:
+            conversation.extend(["", "PLANNING CONTEXT:", planning_context])
+
+        # ── Inject tool results if any tools ran ──────────────────────────
+        tool_calls_made = state.get("tool_calls_made", [])
+        if tool_calls_made:
+            tool_section = ["\nTOOL RESULTS (actions already completed):"]
+            for i, call in enumerate(tool_calls_made, 1):
+                tool_name = call.get("tool", "unknown")
+                # Handle both string results and the new dict results
+                result_data = call.get("result", {})
+                if isinstance(result_data, dict):
+                    success = result_data.get("success", False)
+                    result_msg = result_data.get("result", "")
+                    error_msg = result_data.get("error", "")
+                    status = "SUCCESS" if success else f"FAILED: {error_msg}"
+                    result_str = f"[{status}] {result_msg}"
+                else:
+                    result_str = str(result_data)
+                args = call.get("args", {})
+                tool_section.append(f"{i}. [{tool_name}] args={args}")
+                tool_section.append(f"   result: {result_str[:300]}")
+            tool_section.append(
+                "\nBased on these results, give the user a clear, "
+                "natural confirmation of what was done."
+            )
+            conversation.append("\n".join(tool_section))
+            logger.info(f"[LLM] Injecting {len(tool_calls_made)} tool result(s) into prompt")
 
         prompt = "\n".join(conversation) + "\nAssistant:"
 
@@ -162,29 +205,28 @@ def call_llm(state: DimoState) -> DimoState:
         logger.debug(f"Prompt length: {len(prompt)} chars")
 
         llm_response = ""
-
-        with Client(host=OLLAMA_HOST) as client:
-            if _stream_to_terminal:
-                # ── Streaming mode: print tokens as they arrive ──────────────
-                print("\nDIMO: ", end="", flush=True)
-                stream = client.generate(
-                    model=LLM_MODEL,
-                    prompt=prompt,
-                    stream=True,
-                )
-                for chunk in stream:
-                    token = chunk.response or ""
-                    print(token, end="", flush=True)
-                    llm_response += token
-                print()  # newline after last token
-            else:
-                # ── Batch mode: wait for full response ───────────────────────
-                response = client.generate(
-                    model=LLM_MODEL,
-                    prompt=prompt,
-                    stream=False,
-                )
-                llm_response = response.response or ""
+        client = Client(host=OLLAMA_HOST)
+        if _stream_to_terminal:
+            # ── Streaming mode: print tokens as they arrive ──────────────
+            print("\nDIMO: ", end="", flush=True)
+            stream = client.generate(
+                model=LLM_MODEL,
+                prompt=prompt,
+                stream=True,
+            )
+            for chunk in stream:
+                token = chunk.response or ""
+                print(token, end="", flush=True)
+                llm_response += token
+            print()  # newline after last token
+        else:
+            # ── Batch mode: wait for full response ───────────────────────
+            response = client.generate(
+                model=LLM_MODEL,
+                prompt=prompt,
+                stream=False,
+            )
+            llm_response = response.response or ""
 
         elapsed = time.time() - start_time
         llm_response = llm_response.strip() or "I couldn't generate a response."

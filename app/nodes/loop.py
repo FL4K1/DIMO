@@ -43,12 +43,16 @@ def ask_llm_next_action(state: DimoState) -> dict:
         tools_text += f"- {tool_info['name']}: {tool_info['description']}\n"
         tools_text += f"  Parameters: {tool_info['parameters']}\n\n"
     
-    loop_prompt = f"""You are a task executor. You have completed some tasks already.
+    # Filter completed tools from remaining tools
+    completed_tool_names = [call.get("tool") for call in state.get("tool_calls_made", []) if call.get("result", {}).get("success", False)]
+    remaining_tools = [t for t in state.get("tool_plan", []) if t not in completed_tool_names]
+    
+    loop_prompt = f"""You are a strict task execution router.
 
 COMPLETED TASKS:
 {completed_tasks}
 
-REMAINING TOOLS TO EXECUTE:
+REMAINING TOOLS PLANNED:
 {remaining_tools}
 
 AVAILABLE TOOLS:
@@ -58,10 +62,10 @@ USER REQUEST:
 "{user_message}"
 
 Your job:
-1. Read what's been completed
-2. Decide what to execute next from the remaining tools
-3. If all tasks done, say "DONE"
-4. Otherwise, return the NEXT tool with arguments
+1. Look at COMPLETED TASKS. If the user request is already fulfilled by these tasks, you MUST return "next_tool": "DONE".
+2. If there are no REMAINING TOOLS PLANNED, you MUST return "next_tool": "DONE".
+3. NEVER repeat a tool that is already in COMPLETED TASKS if it succeeded.
+4. Otherwise, choose the next tool to execute.
 
 RESPOND IN THIS EXACT JSON FORMAT:
 {{
@@ -76,14 +80,14 @@ If next_tool is DONE, args can be empty: {{}}.
     logger.info("Asking LLM what tool to execute next")
 
     try:
-        with Client(host=OLLAMA_HOST) as client:
-            response = client.generate(
-                model=LLM_MODEL,
-                prompt=loop_prompt,
-                stream=False
-            )
+        client = Client(host=OLLAMA_HOST)
+        response = client.generate(
+            model=LLM_MODEL,
+            prompt=loop_prompt,
+            stream=False
+        )
         raw_response = response.response.strip() if response.response else ""
-        logger.debug(f"LLM raw response: {raw_response[:200]}")
+        logger.info(f"LLM raw response: {raw_response}")
 
         # Parse JSON response using robust parser
         success, next_action = extract_json_from_text(raw_response)
@@ -98,45 +102,46 @@ If next_tool is DONE, args can be empty: {{}}.
         return {"next_tool": "DONE", "args": {}, "reasoning": f"LLM error: {str(e)}"}
 
 
-def execute_single_tool(tool_name: str, args: dict) -> str:
+def execute_single_tool(tool_name: str, args: dict) -> dict:
     """Execute a single tool by name with given arguments.
     
-    Args:
-        tool_name: Name of tool to execute (must be in TOOL_CATALOG)
-        args: Arguments dict to pass to tool
-        
     Returns:
-        Tool result as string, or error message
+        Structured result dict: {"success": bool, "result": str, "error": str | None}
     """
     try:
-        # Validate tool exists
         if tool_name not in TOOL_CATALOG:
-            error_msg = f"Tool '{tool_name}' not found in catalog"
-            logger.error(error_msg)
-            return error_msg
+            return {"success": False, "result": "", "error": f"Tool '{tool_name}' not found in catalog"}
         
-        # Get tool function from registry
         tool_func = get_tool(tool_name)
         if not tool_func:
-            error_msg = f"Could not load tool '{tool_name}'"
-            logger.error(error_msg)
-            return error_msg
+            return {"success": False, "result": "", "error": f"Could not load tool '{tool_name}'"}
         
-        # Execute tool with args
         logger.info(f"Executing tool '{tool_name}' with args: {args}")
         result = tool_func(**args)
         
+        # Check if the tool already returned a structured dict (e.g. updated browser tools)
+        if isinstance(result, dict) and "success" in result:
+            return result
+        
+        # Legacy fallback: parse string for obvious errors
+        result_str = str(result)
+        is_error = "error" in result_str.lower() or "failed" in result_str.lower() or "could not" in result_str.lower() or "timed out" in result_str.lower()
+        
+        if is_error:
+            logger.warning(f"Tool '{tool_name}' returned error string: {result_str}")
+            return {"success": False, "result": result_str, "error": result_str}
+        
         logger.info(f"Tool '{tool_name}' completed successfully")
-        return str(result)
+        return {"success": True, "result": result_str, "error": None}
         
     except TypeError as e:
         error_msg = f"Invalid arguments for tool '{tool_name}': {e}"
         logger.error(error_msg)
-        return error_msg
+        return {"success": False, "result": "", "error": error_msg}
     except Exception as e:
         error_msg = f"Tool '{tool_name}' execution failed: {e}"
         logger.error(error_msg)
-        return error_msg
+        return {"success": False, "result": "", "error": error_msg}
 
 
 def execute_tool_loop(state: DimoState) -> dict:
@@ -172,57 +177,65 @@ def execute_tool_loop(state: DimoState) -> dict:
         reasoning = next_action.get("reasoning", "")
 
         logger.info(f"LLM decided to execute '{tool_name}': {reasoning}")
+        
+        # Strict infinite loop guard: check if this EXACT tool+args was already successful
+        already_run = any(
+            c.get("tool") == tool_name 
+            and c.get("args") == args 
+            and c.get("result", {}).get("success", False)
+            for c in state.get("tool_calls_made", [])
+        )
+        if already_run:
+            logger.warning(f"LLM tried to repeat successful tool '{tool_name}' with same args. Breaking loop.")
+            break
 
         # Validate arguments first before executing tool
         is_valid, validation_error = validate_tool_args(tool_name, args)
         if not is_valid:
             logger.error(f"Argument validation failed: {validation_error}")
             state["loop_error_count"] += 1
-            state["current_iteration"] += 1  # FIX: count every failed attempt toward the limit
+            state["current_iteration"] += 1
             state["tool_calls_made"].append({
                 "tool": tool_name,
                 "args": args,
-                "result": f"ERROR: {validation_error}",
+                "result": {"success": False, "result": "", "error": validation_error},
                 "reasoning": reasoning
             })
             # Secondary guard: same non-existent tool chosen 3 times → give up immediately
             consecutive_same = sum(
                 1 for c in state["tool_calls_made"][-3:]
-                if c.get("tool") == tool_name and "ERROR" in str(c.get("result", ""))
+                if c.get("tool") == tool_name and not c.get("result", {}).get("success", False)
             )
             if consecutive_same >= 3:
-                logger.error(
-                    f"Tool '{tool_name}' failed validation 3 times in a row — stopping loop"
-                )
+                logger.error(f"Tool '{tool_name}' failed validation 3 times in a row — stopping loop")
                 break
             continue
 
         # 3. Execute the tool
-        result = execute_single_tool(tool_name, args)
+        result_dict = execute_single_tool(tool_name, args)
 
-        # IMMEDIATELY record (don't wait for synthesis)
+        # IMMEDIATELY record
         state["tool_calls_made"].append({
             "tool": tool_name,
-            "result": result,
+            "result": result_dict,
             "args": args,
             "reasoning": reasoning
         })
-
-        # TODO: Emit progress update or return partial state
-        # This allows caller to display result immediately
 
         # 5. Increment iteration
         state["current_iteration"] += 1
         logger.info(f"Iteration {state['current_iteration']} / {state['max_iterations']}")
 
         # 6. Check for repeated errors
-        if "Error" in result or "error" in result.lower():
+        if not result_dict.get("success", False):
             state["loop_error_count"] += 1
             if state["loop_error_count"] > 3:
                 logger.error("Too many tool errors, stopping loop")
                 break
         else:
             state["loop_error_count"] = 0  # Reset on success
+            # Optional: break early if success achieved (prevents multi-tool chains, but safer)
+            # break
 
     if state["current_iteration"] >= state["max_iterations"]:
         logger.warning(f"Reached max iterations limit ({state['max_iterations']})")

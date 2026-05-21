@@ -22,17 +22,21 @@ def extract_json_from_text(text: str) -> Tuple[bool, Dict]:
     
     # Try 1: Direct JSON parse
     try:
-        return True, json.loads(text)
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return True, parsed
     except json.JSONDecodeError:
         pass
     
-    # Try 2: Find JSON block with regex (matches {...} or [...])
-    json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}|\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\]'
+    # Try 2: Find JSON block with regex (matches {...})
+    json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
     matches = re.findall(json_pattern, text)
     
     for match in matches:
         try:
-            return True, json.loads(match)
+            parsed = json.loads(match)
+            if isinstance(parsed, dict):
+                return True, parsed
         except json.JSONDecodeError:
             continue
     
@@ -43,18 +47,9 @@ def extract_json_from_text(text: str) -> Tuple[bool, Dict]:
     if start != -1 and end != -1 and end > start:
         try:
             json_str = text[start:end+1]
-            return True, json.loads(json_str)
-        except json.JSONDecodeError:
-            pass
-    
-    # Try 4: Find first [ and last ] for array
-    start = text.find('[')
-    end = text.rfind(']')
-    
-    if start != -1 and end != -1 and end > start:
-        try:
-            json_str = text[start:end+1]
-            return True, json.loads(json_str)
+            parsed = json.loads(json_str)
+            if isinstance(parsed, dict):
+                return True, parsed
         except json.JSONDecodeError:
             pass
     

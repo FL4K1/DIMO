@@ -16,6 +16,10 @@ requests==2.31.0
 # Web search tool (Phase 1-2) — ddgs is the renamed duckduckgo_search package
 ddgs
 
+# Browser automation (Phase 2 — deterministic Playwright subsystem)
+# After pip install, run: playwright install chromium
+playwright
+
 # ============================================================================
 # OBSERVABILITY (OPTIONAL, set LANGSMITH_API_KEY to enable)
 # ============================================================================
