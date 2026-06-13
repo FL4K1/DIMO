@@ -333,7 +333,9 @@ WHATSAPP_CATALOG = {
     "send_whatsapp_message": {
         "name": "send_whatsapp_message",
         "description": (
-            "Send a WhatsApp message to a contact by name via WhatsApp Web. "
+            "THE ONLY tool for sending WhatsApp messages. ALWAYS use this for ANY WhatsApp request. "
+            "Opens WhatsApp Web in the browser, finds the contact, and sends the message reliably. "
+            "NEVER use send_message for WhatsApp — use this instead. "
             "The contact name should match how it appears in WhatsApp (partial name is okay). "
             "Example: send_whatsapp_message(contact='Mom', message='I will be late today')."
         ),

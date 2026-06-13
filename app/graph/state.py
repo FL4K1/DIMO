@@ -80,3 +80,6 @@ class DimoState(TypedDict):
     
     loop_error_count: int
     """Count of errors in this loop cycle. Too many = stop."""
+    
+    step_results: Optional[Dict]
+    """Stored results from individual steps within a plan, keyed by step number."""

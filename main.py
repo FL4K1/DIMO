@@ -78,6 +78,40 @@ from app.nodes.voice import (
     KEYBOARD_AVAILABLE,
 )
 
+# ── Runtime session + memory extraction wiring ──────────────────────────────────
+import threading
+from app.runtime.session import dimo_session
+from app.nodes.loop import set_session
+set_session(dimo_session)   # inject session so executor can call set_state()
+
+_last_memory_input: str = ""
+
+def _update_memory_async(user_text: str, assistant_text: str) -> None:
+    """
+    Background memory extraction after each conversation turn.
+    Mirrors Mark's _update_memory_async() exactly:
+      - skip if input < 5 chars or same as last input
+      - call should_extract_memory → extract_memory → update_memory
+    """
+    global _last_memory_input
+    user_text      = (user_text      or "").strip()
+    assistant_text = (assistant_text or "").strip()
+    if len(user_text) < 5 or user_text == _last_memory_input:
+        return
+    _last_memory_input = user_text
+    try:
+        from app.memory.memory_manager import (
+            should_extract_memory, extract_memory, update_memory
+        )
+        if not should_extract_memory(user_text, assistant_text):
+            return
+        data = extract_memory(user_text, assistant_text)
+        if data:
+            update_memory(data)
+            logger.info("[Memory] ✅ Extracted: %s", list(data.keys()))
+    except Exception as e:
+        logger.warning("[Memory] ⚠️ %s", e)
+
 def initialize_state():
     """Create initial state for a new conversation."""
     return {
@@ -245,6 +279,13 @@ def main_text():
                 fast_history.append((user_input, response))
                 if len(fast_history) > 10:
                     fast_history.pop(0)
+
+                # ── Memory extraction (background, non-blocking) ────────────────────
+                threading.Thread(
+                    target=_update_memory_async,
+                    args=(user_input, response),
+                    daemon=True,
+                ).start()
             else:
                 print("DIMO: I couldn't generate a response.\n")
                 logger.warning("No response generated")
@@ -431,6 +472,13 @@ def main_voice():
                 fast_history.append((user_text, response))
                 if len(fast_history) > 10:
                     fast_history.pop(0)
+
+                # ── Memory extraction (background, non-blocking) ────────────────────
+                threading.Thread(
+                    target=_update_memory_async,
+                    args=(user_text, response),
+                    daemon=True,
+                ).start()
 
                 # Speak the collected response
                 print("[Speaking...]", end=" ", flush=True)

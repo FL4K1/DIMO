@@ -1,0 +1,41 @@
+{
+  "identity": {
+    "name": {
+      "value": "Mudit",
+      "updated": "2026-06-13"
+    },
+    "job": {
+      "value": "AI Assistant",
+      "updated": "2026-06-12"
+    }
+  },
+  "preferences": {
+    "favorite_music": {
+      "value": "punjabi music",
+      "updated": "2026-06-12"
+    }
+  },
+  "projects": {},
+  "relationships": {
+    "friend_shubham": {
+      "value": "assistant",
+      "updated": "2026-06-13"
+    },
+    "assistant": {
+      "value": "none",
+      "updated": "2026-06-13"
+    },
+    "Arman": {},
+    "friend_Konishka": {
+      "value": "Girl Friend",
+      "updated": "2026-06-13"
+    }
+  },
+  "wishes": {},
+  "notes": {
+    "action_taken": {
+      "value": "sent whatsapp messages",
+      "updated": "2026-06-13"
+    }
+  }
+}

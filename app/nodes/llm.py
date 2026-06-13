@@ -149,10 +149,21 @@ def call_llm(state: DimoState) -> DimoState:
             logger.warning("No messages to process")
             return state
 
-        # ── System preamble ───────────────────────────────────────────────
+        # ── System preamble (with memory + datetime, mirrors Mark's _build_config) ──
+        from datetime import datetime as _dt
+        _now = _dt.now().strftime("%A, %B %d, %Y — %I:%M %p")
+        _time_ctx = f"[CURRENT DATE & TIME]\nRight now it is: {_now}\nUse this to calculate exact times for reminders.\n"
+        try:
+            from app.memory.memory_manager import load_memory, format_memory_for_prompt
+            _mem_str = format_memory_for_prompt(load_memory())
+        except Exception:
+            _mem_str = ""
         system = (
-            "You are DIMO, a helpful AI assistant. "
+            f"{_time_ctx}\n"
+            + (f"{_mem_str}\n" if _mem_str else "")
+            + "You are DIMO, a sharp and helpful AI assistant. "
             "Give direct, concise responses. "
+            "Use memory context above naturally in conversation — never recite it like a list. "
             "CRITICAL: Never claim to have performed an action (like sending a message or playing music) "
             "UNLESS you see explicit confirmation in the TOOL RESULTS with success=True. "
             "If no tools were run, or a tool failed, clearly inform the user that the action was not performed."

@@ -1,0 +1,329 @@
+import shutil
+from pathlib import Path
+from datetime import datetime
+from app.services.files.path_service import PathService
+
+try:
+    import send2trash
+except ImportError:
+    send2trash = None
+
+class FileService:
+    @staticmethod
+    def list_files(path: str = "desktop", show_hidden: bool = False) -> str:
+        try:
+            target = PathService.resolve_path(path)
+            if not target.exists():
+                return f"Path not found: {target}"
+            if not target.is_dir():
+                return f"Not a directory: {target}"
+
+            items = []
+            for item in sorted(target.iterdir()):
+                if not show_hidden and item.name.startswith("."):
+                    continue
+                if item.is_dir():
+                    items.append(f"📁 {item.name}/")
+                else:
+                    size = PathService.format_size(item.stat().st_size)
+                    items.append(f"📄 {item.name} ({size})")
+
+            if not items:
+                return f"Directory is empty: {target}"
+
+            return f"Contents of {target.name}/ ({len(items)} items):\n" + "\n".join(items)
+
+        except PermissionError:
+            return f"Permission denied: {path}"
+        except Exception as e:
+            return f"Error listing files: {e}"
+
+    @staticmethod
+    def create_file(path: str, content: str = "") -> str:
+        try:
+            target = Path(path).expanduser()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+            return f"File created: {target.name}"
+        except Exception as e:
+            return f"Could not create file: {e}"
+
+    @staticmethod
+    def create_folder(path: str) -> str:
+        try:
+            target = Path(path).expanduser()
+            target.mkdir(parents=True, exist_ok=True)
+            return f"Folder created: {target}"
+        except Exception as e:
+            return f"Could not create folder: {e}"
+
+    @staticmethod
+    def delete_file(path: str, confirm: bool = True) -> str:
+        try:
+            target = Path(path).expanduser()
+            if not target.exists():
+                return f"Not found: {path}"
+
+            if send2trash:
+                try:
+                    send2trash.send2trash(str(target))
+                    return f"Moved to Recycle Bin: {target.name}"
+                except Exception:
+                    pass
+
+            # Fallback: permanent delete
+            if target.is_dir():
+                shutil.rmtree(target)
+                return f"Folder deleted permanently: {target.name}"
+            else:
+                target.unlink()
+                return f"File deleted permanently: {target.name}"
+
+        except PermissionError:
+            return f"Permission denied: {path}"
+        except Exception as e:
+            return f"Could not delete: {e}"
+
+    @staticmethod
+    def move_file(source: str, destination: str) -> str:
+        try:
+            src  = Path(source).expanduser()
+            dst  = PathService.resolve_path(destination)
+
+            if not src.exists():
+                return f"Source not found: {source}"
+
+            if dst.is_dir():
+                dst = dst / src.name
+
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(dst))
+            return f"Moved: {src.name} → {dst.parent.name}/"
+
+        except Exception as e:
+            return f"Could not move: {e}"
+
+    @staticmethod
+    def copy_file(source: str, destination: str) -> str:
+        try:
+            src = Path(source).expanduser()
+            dst = PathService.resolve_path(destination)
+
+            if not src.exists():
+                return f"Source not found: {source}"
+
+            if dst.is_dir():
+                dst = dst / src.name
+
+            dst.parent.mkdir(parents=True, exist_ok=True)
+
+            if src.is_dir():
+                shutil.copytree(str(src), str(dst))
+            else:
+                shutil.copy2(str(src), str(dst))
+
+            return f"Copied: {src.name} → {dst.parent.name}/"
+
+        except Exception as e:
+            return f"Could not copy: {e}"
+
+    @staticmethod
+    def rename_file(path: str, new_name: str) -> str:
+        try:
+            target   = Path(path).expanduser()
+            new_path = target.parent / new_name
+
+            if not target.exists():
+                return f"Not found: {path}"
+            if new_path.exists():
+                return f"A file named '{new_name}' already exists."
+
+            target.rename(new_path)
+            return f"Renamed: {target.name} → {new_name}"
+
+        except Exception as e:
+            return f"Could not rename: {e}"
+
+    @staticmethod
+    def read_file(path: str, max_chars: int = 3000) -> str:
+        try:
+            target = Path(path).expanduser()
+            if not target.exists():
+                return f"File not found: {path}"
+            if not target.is_file():
+                return f"Not a file: {path}"
+
+            content = target.read_text(encoding="utf-8", errors="ignore")
+            if len(content) > max_chars:
+                content = content[:max_chars] + f"\n\n... (truncated, {len(content)} total chars)"
+            return content
+
+        except Exception as e:
+            return f"Could not read file: {e}"
+
+    @staticmethod
+    def write_file(path: str, content: str, append: bool = False) -> str:
+        try:
+            target = Path(path).expanduser()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            mode = "a" if append else "w"
+            with open(target, mode, encoding="utf-8") as f:
+                f.write(content)
+            action = "Appended to" if append else "Written to"
+            return f"{action}: {target.name}"
+        except Exception as e:
+            return f"Could not write file: {e}"
+
+    @staticmethod
+    def find_files(name: str = "", extension: str = "", path: str = "home", max_results: int = 20) -> str:
+        try:
+            search_path = PathService.resolve_path(path)
+            if not search_path.exists():
+                return f"Search path not found: {path}"
+
+            results = []
+            pattern = f"*{extension}" if extension else "*"
+
+            for item in search_path.rglob(pattern):
+                if item.is_file():
+                    if name and name.lower() not in item.name.lower():
+                        continue
+                    size = PathService.format_size(item.stat().st_size)
+                    results.append(f"📄 {item.name} ({size}) — {item.parent}")
+                    if len(results) >= max_results:
+                        break
+
+            if not results:
+                query = name or extension or "files"
+                return f"No {query} found in {search_path.name}/"
+
+            return f"Found {len(results)} file(s):\n" + "\n".join(results)
+
+        except Exception as e:
+            return f"Search error: {e}"
+
+    @staticmethod
+    def get_largest_files(path: str = "home", count: int = 10) -> str:
+        try:
+            search_path = PathService.resolve_path(path)
+            if not search_path.exists():
+                return f"Path not found: {path}"
+
+            files = []
+            for item in search_path.rglob("*"):
+                if item.is_file():
+                    try:
+                        files.append((item.stat().st_size, item))
+                    except Exception:
+                        continue
+
+            files.sort(reverse=True)
+            top = files[:count]
+
+            if not top:
+                return "No files found."
+
+            lines = [f"Top {len(top)} largest files in {search_path.name}/:\n"]
+            for size, f in top:
+                lines.append(f"  {PathService.format_size(size):>10}  {f.name}  ({f.parent})")
+
+            return "\n".join(lines)
+
+        except Exception as e:
+            return f"Error: {e}"
+
+    @staticmethod
+    def get_disk_usage(path: str = "home") -> str:
+        try:
+            target = PathService.resolve_path(path)
+            usage  = shutil.disk_usage(target)
+            total  = PathService.format_size(usage.total)
+            used   = PathService.format_size(usage.used)
+            free   = PathService.format_size(usage.free)
+            pct    = usage.used / usage.total * 100
+
+            return (
+                f"Disk usage for {target}:\n"
+                f"  Total : {total}\n"
+                f"  Used  : {used} ({pct:.1f}%)\n"
+                f"  Free  : {free}"
+            )
+        except Exception as e:
+            return f"Could not get disk usage: {e}"
+
+    @staticmethod
+    def organize_desktop() -> str:
+        try:
+            desktop = PathService.get_desktop()
+            type_map = {
+                "Images":    [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg", ".ico"],
+                "Documents": [".pdf", ".doc", ".docx", ".txt", ".xls", ".xlsx", ".ppt", ".pptx", ".csv"],
+                "Videos":    [".mp4", ".avi", ".mkv", ".mov", ".wmv", ".flv", ".webm"],
+                "Music":     [".mp3", ".wav", ".flac", ".aac", ".ogg", ".wma"],
+                "Archives":  [".zip", ".rar", ".7z", ".tar", ".gz"],
+                "Code":      [".py", ".js", ".html", ".css", ".json", ".xml", ".ts", ".cpp", ".java"],
+            }
+
+            moved    = []
+            skipped  = []
+
+            for item in desktop.iterdir():
+                if item.is_dir() or item.name.startswith("."):
+                    continue
+
+                ext        = item.suffix.lower()
+                target_dir = None
+
+                for folder, extensions in type_map.items():
+                    if ext in extensions:
+                        target_dir = desktop / folder
+                        break
+
+                if target_dir is None:
+                    target_dir = desktop / "Others"
+
+                target_dir.mkdir(exist_ok=True)
+                new_path = target_dir / item.name
+
+                if new_path.exists():
+                    skipped.append(item.name)
+                    continue
+
+                shutil.move(str(item), str(new_path))
+                moved.append(f"{item.name} → {target_dir.name}/")
+
+            result = f"Desktop organized. {len(moved)} files moved."
+            if moved:
+                result += "\n" + "\n".join(moved[:10])
+                if len(moved) > 10:
+                    result += f"\n... and {len(moved)-10} more."
+            if skipped:
+                result += f"\n{len(skipped)} files skipped (already exist)."
+
+            return result
+
+        except Exception as e:
+            return f"Could not organize desktop: {e}"
+
+    @staticmethod
+    def get_file_info(path: str) -> str:
+        try:
+            target = Path(path).expanduser()
+            if not target.exists():
+                return f"Not found: {path}"
+
+            stat = target.stat()
+            info = {
+                "Name":     target.name,
+                "Type":     "Folder" if target.is_dir() else "File",
+                "Size":     PathService.format_size(stat.st_size),
+                "Location": str(target.parent),
+                "Created":  datetime.fromtimestamp(stat.st_ctime).strftime("%Y-%m-%d %H:%M"),
+                "Modified": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+                "Extension": target.suffix or "None",
+            }
+
+            return "\n".join(f"  {k}: {v}" for k, v in info.items())
+
+        except Exception as e:
+            return f"Could not get file info: {e}"
