@@ -1,5 +1,5 @@
 import os
-from typing import Optional
+from typing import Optional, Any
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -14,19 +14,42 @@ class LLMGateway:
         return os.getenv("GEMINI_API_KEY", "")
 
     @staticmethod
-    def generate(prompt: str, model: str = "gemini-2.5-flash", system_instruction: Optional[str] = None) -> str:
+    def generate(
+        prompt: Any,
+        model: str = "gemini-2.5-flash",
+        system_instruction: Optional[str] = None,
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+    ) -> str:
         """
         Generates text from the specified model.
         Automatically routes to Gemini if the model starts with 'gemini',
         otherwise attempts to use local Ollama.
+        
+        Args:
+            prompt: The prompt or content to generate from
+            model: Model name (default: gemini-2.5-flash)
+            system_instruction: System-level instruction
+            max_tokens: Maximum output tokens (optional)
+            temperature: Sampling temperature (optional, 0.0-1.0)
         """
         if model.startswith("gemini"):
-            return LLMGateway._generate_gemini(prompt, model, system_instruction)
+            return LLMGateway._generate_gemini(
+                prompt, model, system_instruction, max_tokens, temperature
+            )
         else:
-            return LLMGateway._generate_ollama(prompt, model, system_instruction)
+            return LLMGateway._generate_ollama(
+                prompt, model, system_instruction, max_tokens, temperature
+            )
 
     @staticmethod
-    def _generate_gemini(prompt: str, model: str, system_instruction: Optional[str]) -> str:
+    def _generate_gemini(
+        prompt: Any,
+        model: str,
+        system_instruction: Optional[str],
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+    ) -> str:
         try:
             from google import genai
             from google.genai import types
@@ -40,11 +63,18 @@ class LLMGateway:
         try:
             client = genai.Client(api_key=api_key)
             
-            # Use system instructions if provided
+            # Build config with optional parameters
+            config_kwargs = {}
+            if max_tokens is not None:
+                config_kwargs["max_output_tokens"] = max_tokens
+            if temperature is not None:
+                config_kwargs["temperature"] = temperature
+            
             config = None
-            if system_instruction:
+            if system_instruction or config_kwargs:
                 config = types.GenerateContentConfig(
-                    system_instruction=system_instruction
+                    system_instruction=system_instruction,
+                    **config_kwargs
                 )
 
             response = client.models.generate_content(
@@ -57,7 +87,13 @@ class LLMGateway:
             return f"Error from Gemini: {e}"
 
     @staticmethod
-    def _generate_ollama(prompt: str, model: str, system_instruction: Optional[str]) -> str:
+    def _generate_ollama(
+        prompt: Any,
+        model: str,
+        system_instruction: Optional[str],
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+    ) -> str:
         try:
             from ollama import Client
         except ImportError:
@@ -72,9 +108,17 @@ class LLMGateway:
                 messages.append({"role": "system", "content": system_instruction})
             messages.append({"role": "user", "content": prompt})
             
+            # Build options with optional parameters
+            options = {}
+            if max_tokens is not None:
+                options["num_predict"] = max_tokens
+            if temperature is not None:
+                options["temperature"] = temperature
+            
             response = client.chat(
                 model=model,
-                messages=messages
+                messages=messages,
+                options=options if options else None,
             )
             return response.get("message", {}).get("content", "").strip()
         except Exception as e:

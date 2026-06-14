@@ -30,6 +30,8 @@ load_dotenv()
 import logging
 logger = logging.getLogger("dimo.memory")
 
+from app.services.agents.llm_gateway import LLMGateway
+
 # ── Paths ─────────────────────────────────────────────────────────────────────
 _HERE        = Path(__file__).resolve().parent
 MEMORY_PATH  = _HERE / "long_term.json"
@@ -185,39 +187,42 @@ def update_memory(memory_update: dict) -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _gemini_chat(prompt: str, system: str, max_tokens: int = 10) -> str:
-    """Call Gemini Flash Lite for memory ops (fast + cheap)."""
+    """Call Gemini Flash Lite for memory ops (fast + cheap) via LLMGateway."""
     if not GEMINI_API_KEY:
         return ""
     try:
-        import google.generativeai as genai  # noqa: PLC0415
-        genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel(
-            model_name=GEMINI_MEMORY_MODEL,
+        result = LLMGateway.generate(
+            prompt=prompt,
+            model=GEMINI_MEMORY_MODEL,
             system_instruction=system,
+            max_tokens=max_tokens,
+            temperature=0.0,
         )
-        resp = model.generate_content(
-            prompt,
-            generation_config={"max_output_tokens": max_tokens, "temperature": 0.0},
-        )
-        return (resp.text or "").strip()
+        # Check if result is an error
+        if result.startswith("Error"):
+            logger.debug("[Memory] Gemini call failed: %s", result)
+            return ""
+        return result
     except Exception as e:
         logger.debug("[Memory] Gemini call failed: %s", e)
         return ""
 
 
 def _ollama_chat(prompt: str, system: str, max_tokens: int = 10) -> str:
-    """Fallback: call Ollama generate with a system + user prompt."""
+    """Fallback: call Ollama via LLMGateway."""
     try:
-        from ollama import Client  # type: ignore  # noqa: PLC0415
-        client = Client(host=OLLAMA_HOST)
         full_prompt = f"{system}\n\n{prompt}"
-        resp = client.generate(
-            model=MEMORY_MODEL,
+        result = LLMGateway.generate(
             prompt=full_prompt,
-            stream=False,
-            options={"num_predict": max_tokens, "temperature": 0.0},
+            model=MEMORY_MODEL,
+            max_tokens=max_tokens,
+            temperature=0.0,
         )
-        return (resp.response or "").strip()
+        # Check if result is an error
+        if result.startswith("Error"):
+            logger.warning("[Memory] Ollama call failed: %s", result)
+            return ""
+        return result
     except Exception as e:
         logger.warning("[Memory] Ollama call failed: %s", e)
         return ""

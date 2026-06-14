@@ -1,0 +1,71 @@
+{
+  "timestamp": "2026-06-14T20:46:46.097762",
+  "overall_score": 4.8,
+  "category_scores": {
+    "architecture": 5,
+    "dependency_health": 1,
+    "tool_reliability": 9,
+    "startup_stability": 5,
+    "deployment_readiness": 4
+  },
+  "categories": {
+    "Tool Registry Validation": {
+      "status": false,
+      "details": ""
+    },
+    "Import Validation": {
+      "status": false,
+      "details": "7 failures"
+    },
+    "Runtime Smoke Tests": {
+      "status": false,
+      "details": ""
+    },
+    "LLM Migration": {
+      "status": true,
+      "details": "No legacy LLM code detected"
+    }
+  },
+  "failures": [
+    {
+      "component": "Tool Registry",
+      "error": "Failed to load: No module named 'duckduckgo_search'"
+    },
+    {
+      "component": "Import",
+      "error": "app.tools.registry: No module named 'duckduckgo_search'"
+    },
+    {
+      "component": "Import",
+      "error": "app.nodes.planning: No module named 'ollama'"
+    },
+    {
+      "component": "Import",
+      "error": "app.nodes.loop: No module named 'ollama'"
+    },
+    {
+      "component": "Import",
+      "error": "app.services.files.document_service: No module named 'google.genai'"
+    },
+    {
+      "component": "Import",
+      "error": "app.tools.native.browser: No module named 'playwright'"
+    },
+    {
+      "component": "Import",
+      "error": "app.tools.native.youtube: No module named 'playwright'"
+    },
+    {
+      "component": "Import",
+      "error": "app.tools.native.flights: No module named 'playwright'"
+    },
+    {
+      "component": "LLM Migration",
+      "error": "LLMGateway uses Google Generative AI"
+    }
+  ],
+  "warnings": [],
+  "tests_passed": 1,
+  "tests_failed": 6,
+  "recommendation": "\u2717 NEEDS ADDITIONAL WORK"
+}

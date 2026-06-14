@@ -1,0 +1,99 @@
+DIMO (Digital Intelligence for Multimodal Operations)
+===================================================
+Comprehensive Feature, Tool, Command, and Testing Guide
+
+1. EVERY FEATURE OF DIMO
+------------------------
+DIMO is a complete local-first AI agent powered by LangGraph and Ollama. Its core features include:
+- Local AI Orchestration: Uses local Llama models (e.g., Llama 3 8B for reasoning, Llama 3.2 3B for fast intent routing).
+- Agentic Framework: Employs a LangGraph state machine, meaning it can process multi-step tasks, loop through errors, and route tools dynamically.
+- System & GUI Automation: Complete control over the host Windows machine, including mimicking mouse movements, keyboard presses, manipulating window states, and controlling system settings (volume, brightness, power).
+- Vision & Audio (Multimodal): Capable of "seeing" via screen captures and webcam using local vision processing, as well as integrating voice (VAD, STT, TTS).
+- Web Browser Automation: Can natively control a web browser to navigate, scrape text, click complex UI elements, and manage tabs.
+- Multi-Platform Messaging: Direct native integrations to send messages via WhatsApp Desktop, Telegram Desktop, and Instagram DMs without requiring manual APIs.
+- Developer & Code Execution: Features autonomous coding agents ("Dev Agent", "Project Scaffolder") capable of creating, running, debugging, and testing whole code projects directly on the machine.
+- File Processing: Built-in capabilities to convert PDFs, analyze data (CSV/Excel), crop/resize images, process audio/video files, and extract archives.
+- Long-term Memory: Implements Qdrant (vector db) and SQLite to remember conversational facts, user preferences, and semantic context indefinitely.
+- Specialized API Integration: Integrates seamlessly with DuckDuckGo (headless search), Google Flights, YouTube/Spotify, and global weather sources.
+- Gaming Management: Automated updater, installer, and downloader for games on Steam and Epic Games.
+
+2. LIST OF TOOLS PERFORMABLE ON DIMO
+------------------------------------
+DIMO is equipped with over 20 specific tools registered in its core `registry.py`.
+
+* Information & Search Tools
+  - `web_search`: Headless, fast web search via DuckDuckGo for querying real-time information.
+  - `weather_report`: Returns accurate weather and temperature conditions for a requested city.
+  - `flight_finder`: Searches Google Flights for best airfare options, routes, and pricing.
+  - `youtube_video`: Controls YouTube to play videos, fetch trending lists, or summarize video contents.
+
+* Computer & System Control Tools
+  - `open_app`: Launches any application, website, or program on Windows (e.g., "Spotify", "Notepad").
+  - `computer_settings`: Modifies OS settings (brightness, volume, dark mode, lock screen, shutdown).
+  - `computer_control`: Simulates direct mouse actions (click, scroll, move) and keyboard shortcuts.
+  - `reminder`: Sets scheduled native Windows Task Scheduler reminders.
+  - `game_updater`: Interacts with Steam/Epic to install, update, or list downloaded games.
+
+* Web & Messaging Tools
+  - `compose_message`: Generates natural language texts (apologies, greetings, letters, emails).
+  - `send_whatsapp_desktop`: Uses Windows GUI automation to securely send WhatsApp messages to contacts.
+  - `send_telegram_message`: Uses Windows GUI automation to send Telegram messages.
+  - `send_instagram_dm`: Logs in and sends DMs via web browser automation.
+  - `browser_control`: Manipulates web elements directly (click, type, navigate, smart_click).
+
+* File & Developer Tools
+  - `file_controller`: Creates, moves, deletes, renames, and finds files & folders.
+  - `file_processor`: Advanced processing on complex files (OCR, PDF to Word, CSV stats, audio transcribing).
+  - `code_helper`: Writes, edits, explains, and runs individual code scripts (e.g., Python).
+  - `dev_agent`: Autonomous multi-file project builder that handles dependencies and debugging.
+  - `project_scaffolder`: Scaffolds complex project skeleton directories based on JSON/description.
+
+* Multi-Modal & State Tools
+  - `screen_process`: Uses computer vision to analyze the current screen display or webcam feed.
+  - `save_memory`: Silently stores personal user facts (name, hobbies) into long-term databases.
+  - `agent_task`: A recursive tool planner for executing complex multi-step compound goals.
+  - `shutdown_dimo`: Safely terminates the DIMO session.
+
+3. COMMANDS (HOW TO USE THEM)
+-----------------------------
+Because DIMO is highly intent-driven, you command it using natural language text or voice.
+
+Examples:
+- "Search for the latest AI news and summarize it." -> Triggers `web_search`
+- "Open Photoshop." -> Triggers `open_app`
+- "What's the weather like in Tokyo today?" -> Triggers `weather_report`
+- "Draft a polite email to John declining the offer, then send it via WhatsApp." -> Triggers `compose_message` -> `send_whatsapp_desktop`
+- "Set a reminder for tomorrow at 9 AM to call the plumber." -> Triggers `reminder`
+- "Play lo-fi hip hop on YouTube." -> Triggers `youtube_video`
+- "What can you see on my screen right now?" -> Triggers `screen_process`
+- "Mute my computer." -> Triggers `computer_settings`
+- "Build a python script to scrape Amazon and save it to desktop." -> Triggers `code_helper`
+- "Update my Steam library in the background." -> Triggers `game_updater`
+- "Find the cheapest business class flights to Dubai for next weekend." -> Triggers `flight_finder`
+- "Extract text from the invoice.pdf file in my downloads." -> Triggers `file_processor`
+
+4. HOW TO TEST THEM
+-------------------
+Testing in DIMO can be done in two ways: automated isolated tests, and end-to-end interactive testing.
+
+A. Automated Test Scripts (Isolated Tests)
+The DIMO project root contains a suite of `test_*.py` files designed to execute tools individually outside the LLM loop.
+To test a feature, open your terminal (e.g., PowerShell) in the DIMO root directory and run the relevant script:
+  - To test LLM connectivity & Intent Router: `python test_ollama.py`
+  - To test Computer Vision: `python test_vision.py`
+  - To test Application Launching: `python test_startup.py`
+  - To test Mouse/Keyboard Automation: `python test_gui_automation.py`
+  - To test Web Browser Automation: `python test_browser_automation.py`
+  - To test Weather API: `python test_weather.py`
+  - To test YouTube Integration: `python test_youtube.py`
+  - To test Google Flights: `python test_flights.py`
+  - To test WhatsApp/Telegram Integration: `python test_messaging.py`
+  - To test the Dev Agent / Scaffolder: `python test_dev_agent.py` / `python test_scaffolder.py`
+
+B. Interactive End-to-End Testing (CLI)
+To test how the Language Model interprets your natural language commands and routes them to the tools:
+  1. Ensure Ollama is running (`ollama serve`) and the models are pulled.
+  2. From the DIMO directory, run `python main.py`.
+  3. Wait for the CLI prompt (e.g., `You: `).
+  4. Type one of the natural language commands (from Section 3) and hit Enter.
+  5. Observe the console logs; you will see DIMO route the intent to the specific tool, execute it natively, and respond with the synthesized result.
