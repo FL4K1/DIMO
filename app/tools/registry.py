@@ -31,35 +31,11 @@ from app.tools.native.files import file_controller as _native_file_controller, f
 from app.tools.native.dev import dev_agent as _native_dev_agent, code_helper as _native_code_helper, project_scaffolder as _native_project_scaffolder
 from app.tools.native.weather import weather_report as _native_weather_report
 from app.tools.native.flights import flight_finder as _native_flight_finder
+from app.tools.native.youtube import youtube_video as _native_youtube_video
+from app.tools.native.vision import screen_process as _native_screen_process
+from app.tools.native.browser import browser_control as _native_browser_control
+from app.tools.native.automation import computer_control as _native_computer_control
 
-# ── Mark-bridge action wrappers ───────────────────────────────────────────────
-try:
-    from app.actions.wrappers import (
-        weather_report       as _weather_report,
-        open_app             as _open_app_mark,
-        send_message         as _send_message,
-        youtube_video        as _youtube_video,
-        screen_process       as _screen_process,
-        browser_control      as _browser_control,
-        desktop_control      as _desktop_control,
-        computer_control     as _computer_control,
-        flight_finder        as _flight_finder,
-        web_search_wrapper   as _web_search_mark,
-    )
-    _WRAPPERS_LOADED = True
-    logger.info("[registry] Mark action wrappers loaded successfully")
-except ImportError as _e:
-    _WRAPPERS_LOADED = False
-    logger.warning("[registry] Mark action wrappers not loaded: %s", _e)
-    # Fallbacks so the catalog is always safe to import
-    def _make_unavailable(name: str):
-        def _unavailable(**kwargs) -> dict:
-            return {"success": False, "result": "", "error": f"Tool '{name}' not available (bridge import failed)"}
-        return _unavailable
-    
-    _weather_report = _open_app_mark = _send_message = _youtube_video = _make_unavailable("bridge")
-    _screen_process = _browser_control = _desktop_control = _make_unavailable("bridge")
-    _computer_control = _flight_finder = _web_search_mark = _make_unavailable("bridge")
 
 # ── Browser subsystem tools ───────────────────────────────────────────────────
 try:
@@ -139,7 +115,7 @@ TOOL_CATALOG: dict = {
             },
             "required": ["city"],
         },
-        "function": _weather_report,
+        "function": _native_weather_report,
     },
 
     # ── Text / message composition (generates text in state, NEVER writes files) ─
@@ -246,7 +222,7 @@ TOOL_CATALOG: dict = {
             },
             "required": [],
         },
-        "function": _youtube_video,
+        "function": _native_youtube_video,
     },
 
     # ── Screen / vision ───────────────────────────────────────────────────────
@@ -266,7 +242,7 @@ TOOL_CATALOG: dict = {
             },
             "required": ["text"],
         },
-        "function": _screen_process,
+        "function": _native_screen_process,
     },
 
     # ── Computer settings ─────────────────────────────────────────────────────
@@ -312,7 +288,7 @@ TOOL_CATALOG: dict = {
             },
             "required": ["action"],
         },
-        "function": _browser_control,
+        "function": _native_browser_control,
     },
 
     # ── File controller ───────────────────────────────────────────────────────
@@ -334,24 +310,6 @@ TOOL_CATALOG: dict = {
             "required": ["action"],
         },
         "function": _native_file_controller,
-    },
-
-    # ── Desktop control ───────────────────────────────────────────────────────
-    "desktop_control": {
-        "name": "desktop_control",
-        "description": "Controls the desktop: wallpaper, organize, clean, list, stats.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {"type": "string", "description": "wallpaper | wallpaper_url | organize | clean | list | stats | task"},
-                "path":   {"type": "string", "description": "Image path for wallpaper"},
-                "url":    {"type": "string", "description": "Image URL for wallpaper_url"},
-                "mode":   {"type": "string", "description": "by_type or by_date for organize"},
-                "task":   {"type": "string", "description": "Natural language desktop task"},
-            },
-            "required": ["action"],
-        },
-        "function": _desktop_control,
     },
 
     # ── Code helper ───────────────────────────────────────────────────────────
@@ -449,7 +407,7 @@ TOOL_CATALOG: dict = {
             },
             "required": ["action"],
         },
-        "function": _computer_control,
+        "function": _native_computer_control,
     },
 
     # ── Game updater ──────────────────────────────────────────────────────────
@@ -495,7 +453,7 @@ TOOL_CATALOG: dict = {
             },
             "required": ["origin", "destination", "date"],
         },
-        "function": _flight_finder,
+        "function": _native_flight_finder,
     },
 
     # ── File processor ────────────────────────────────────────────────────────
