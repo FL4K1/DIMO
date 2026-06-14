@@ -1,15 +1,12 @@
 """
-Tool registry for DIMO.
-
-TOOL_CATALOG is the single source of truth for all tools available to
-the planning and execution nodes. Each entry maps a tool name to its
+Central registry for all tools available to the planner.
+Each entry maps the exact string name of the tool to its metadata
 description (used by the planner LLM), parameter schema (used by the
 validator), and function reference (called by the executor).
 
-Tool schemas are copied verbatim from Mark-XXXIX-OR-main TOOL_DECLARATIONS
+Tool schemas are copied verbatim from the native TOOL_DECLARATIONS
 so the planner LLM prompt is identical in richness. Function references
-point to DIMO's thin-wrapper layer (app/actions/wrappers.py) which bridges
-Mark's action modules without requiring PyQt6 or the Gemini API.
+point to DIMO's native tool modules.
 
 Adding a new tool:
     1. Implement or wrap it in app/actions/wrappers.py
@@ -32,6 +29,8 @@ from app.tools.native.system import computer_settings as _native_settings, remin
 from app.tools.native.external import game_updater as _native_game_updater
 from app.tools.native.files import file_controller as _native_file_controller, file_processor as _native_file_processor
 from app.tools.native.dev import dev_agent as _native_dev_agent, code_helper as _native_code_helper, project_scaffolder as _native_project_scaffolder
+from app.tools.native.weather import weather_report as _native_weather_report
+from app.tools.native.flights import flight_finder as _native_flight_finder
 
 # ── Mark-bridge action wrappers ───────────────────────────────────────────────
 try:
