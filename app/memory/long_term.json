@@ -37,5 +37,11 @@
       "value": "sent whatsapp messages",
       "updated": "2026-06-13"
     }
+  },
+  "test": {
+    "system": {
+      "value": "ok",
+      "updated": "2026-06-15"
+    }
   }
 }

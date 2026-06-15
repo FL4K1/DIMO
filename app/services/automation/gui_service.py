@@ -15,7 +15,8 @@ try:
     pyautogui.FAILSAFE = True
     pyautogui.PAUSE = 0.05
     _PYAUTOGUI = True
-except ImportError:
+except ImportError as e:
+    logger.warning(f"[GuiService] Failed to import pyautogui: {e}")
     _PYAUTOGUI = False
 
 try:

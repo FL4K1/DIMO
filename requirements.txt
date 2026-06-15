@@ -4,14 +4,14 @@
 # PHASE 0-1: CORE ORCHESTRATION (REQUIRED)
 # ============================================================================
 
-langchain==0.1.14
-langchain-core==0.1.36
-langchain-community==0.0.33
-langgraph==0.0.36
-ollama==0.6.2
-pydantic==2.5.0
-python-dotenv==1.0.0
-requests==2.31.0
+langchain
+langchain-core
+langchain-community
+langgraph
+ollama
+pydantic
+python-dotenv==1.2.2
+requests==2.33.0
 
 # Web search tool (Phase 1-2) — ddgs is the renamed duckduckgo_search package
 ddgs
@@ -24,7 +24,7 @@ playwright
 # OBSERVABILITY (OPTIONAL, set LANGSMITH_API_KEY to enable)
 # ============================================================================
 
-langsmith==0.1.14
+langsmith
 
 # ============================================================================
 # PHASE 3: VOICE I/O
@@ -37,7 +37,7 @@ piper-tts
 edge-tts
 keyboard
 soundfile
-numpy
+numpy>=2.1.0
 # pyaudio installed separately via: pip install pyaudio
 # (Windows binary wheel — see INSTALL_NOTES below)
 
@@ -62,3 +62,8 @@ numpy
 
 # python-telegram-bot==20.5
 # twilio==8.11.0
+
+youtube-transcript-api
+google-genai
+browser-use
+langchain-ollama

@@ -13,9 +13,8 @@ def screen_process(
             return {"success": False, "result": "", "error": "No text provided for screen analysis."}
 
         # The VisionDebugger service will return the text response from the model
-        result_text = VisionDebugger.analyze_screen(
+        result_text = VisionDebugger.debug_screen(
             description=text,
-            angle=angle,
             logger=logger.info
         )
 

@@ -2,6 +2,7 @@ import os
 from typing import Optional, Any
 from dotenv import load_dotenv
 
+
 load_dotenv()
 
 class LLMGateway:
@@ -52,6 +53,8 @@ class LLMGateway:
     ) -> str:
         try:
             from google import genai
+            
+           
             from google.genai import types
         except ImportError:
             return "Error: google-genai is not installed."
