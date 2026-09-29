@@ -13,15 +13,26 @@ def computer_settings(**kwargs) -> dict:
         action = kwargs.get("action", "")
         value = kwargs.get("value")
         
-        # Guard for dangerous actions
+        # Guard for dangerous actions using Mark-LV's confirm_gate
         if action in ("restart", "shutdown"):
-            confirmed = str(kwargs.get("confirmed", "")).lower()
-            if confirmed not in ("yes", "true", "1", "confirm"):
-                return {
-                    "success": False,
-                    "result": "",
-                    "error": f"This will {action} the computer. Please confirm by calling again with confirmed=yes."
-                }
+            token = kwargs.get("token")
+            try:
+                from core.confirm import confirm_gate
+                if not confirm_gate.verify(token):
+                    # Request UI confirmation banner
+                    confirm_gate.request(
+                        summary=f"Computer System {action.capitalize()}",
+                        detail=f"The assistant is attempting to {action} your computer.",
+                        on_confirm=lambda: service.execute_action(action, value),
+                        danger=True
+                    )
+                    return {
+                        "success": False,
+                        "result": "",
+                        "error": f"Confirmation required. A prompt has been displayed on the screen for human approval."
+                    }
+            except ImportError:
+                pass
                 
         result = service.execute_action(action, value)
         return {"success": True, "result": result, "error": ""}

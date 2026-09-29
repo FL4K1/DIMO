@@ -21,10 +21,22 @@ def file_controller(**kwargs) -> dict:
         elif action == "create_file":
             full = _full_path(path, name)
             result = FileService.create_file(full, content=content)
+            try:
+                from core.undo import push_undo
+                from send2trash import send2trash
+                push_undo(f"Create file {full}", lambda: send2trash(full))
+            except Exception:
+                pass
 
         elif action == "create_folder":
             full = _full_path(path, name)
             result = FileService.create_folder(full)
+            try:
+                from core.undo import push_undo
+                from send2trash import send2trash
+                push_undo(f"Create folder {full}", lambda: send2trash(full))
+            except Exception:
+                pass
 
         elif action == "delete":
             full = _full_path(path, name)

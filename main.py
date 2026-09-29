@@ -502,31 +502,22 @@ def main_voice():
 
 
 def main():
-    """Main entry point - choose between text and voice modes."""
+    """Main entry point - boots the Hybrid UI Engine."""
+    import sys
+    import os
     
-    parser = argparse.ArgumentParser(
-        description="DIMO - Digital Intelligence for Multimodal Operations",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python main.py              # Text CLI mode (default)
-  python main.py --voice      # Voice interface mode
-  python main.py --help       # Show this message
-        """
-    )
+    logger.info("Booting DIMO Hybrid UI Engine (Mark-LV frontend)")
+    # Add marklv source to python path so its deep absolute imports work seamlessly
+    marklv_path = os.path.join(os.path.dirname(__file__), 'app', 'marklv')
+    if marklv_path not in sys.path:
+        sys.path.insert(0, marklv_path)
     
-    parser.add_argument(
-        "--voice",
-        action="store_true",
-        help="Run in voice interface mode (requires microphone and speaker)"
-    )
-    
-    args = parser.parse_args()
-    
-    if args.voice:
-        main_voice()
-    else:
-        main_text()
+    try:
+        from app.marklv.main import main as marklv_main
+        marklv_main()
+    except Exception as e:
+        logger.error(f"Failed to boot Hybrid engine: {e}", exc_info=True)
+        print(f"Failed to boot: {e}")
 
 
 if __name__ == "__main__":
