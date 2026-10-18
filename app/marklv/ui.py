@@ -1616,7 +1616,7 @@ class HueWheel(QWidget):
 class CustomizeOverlay(QWidget):
     """Floating overlay — change assistant name, user name, UI colour and voice."""
 
-    saved = pyqtSignal(str, str, str, str)   # assistant_name, user_name, ui_color, voice
+    saved = pyqtSignal([str, str, str, str, str], [str, str, str, str])   # assistant_name, user_name, ui_color, voice, ai_engine
     _OW, _OH = 400, 588
 
     def __init__(self, assistant_name="JARVIS", user_name="",
@@ -1870,8 +1870,13 @@ class CustomizeOverlay(QWidget):
     def _save(self):
         name = self._name_input.text().strip() or "JARVIS"
         user = self._user_input.text().strip()
-        self.saved.emit(name, user, self._sel_color or DEFAULT_UI_COLOR, self._sel_voice)
+        engine = getattr(self, "_sel_engine", None) or "Gemini Live"
+        self.saved[str, str, str, str, str].emit(name, user, self._sel_color or DEFAULT_UI_COLOR, self._sel_voice, engine)
         self.hide()
+
+    def set_engine(self, engine: str):
+        self._sel_engine = engine
+        self._refresh_engine_btns()
 
 
 class PluginManagerOverlay(QWidget):
@@ -2084,7 +2089,153 @@ class ConfirmBanner(_HudOverlay):
         # Default focus on CANCEL: if someone hits Enter without reading, the
         # safe answer wins.
         no.setDefault(True)
-        no.setFocus()
+
+class LocalModeConfirmOverlay(_HudOverlay):
+    """Confirmation dialog shown before starting Ollama and verifying local mode readiness."""
+
+    confirmed = pyqtSignal(bool)
+    _OW = 440
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(f"""
+            LocalModeConfirmOverlay {{
+                background: rgba(0, 10, 16, 250);
+                border: 1px solid {C.PRI};
+                border-radius: 6px;
+            }}
+        """)
+        self.setFixedWidth(self._OW)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(20, 16, 20, 16)
+        lay.setSpacing(10)
+
+        hdr = QLabel("AI ENGINE — LOCAL LLM MODE")
+        hdr.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        hdr.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        lay.addWidget(hdr)
+
+        ttl = QLabel("Switch to Local LLM Mode?")
+        ttl.setWordWrap(True)
+        ttl.setFont(QFont("Courier New", 11, QFont.Weight.Bold))
+        ttl.setStyleSheet(f"color: {C.TEXT}; background: transparent;")
+        lay.addWidget(ttl)
+
+        dtl = QLabel(
+            "Jarvis will verify that the local Ollama server and configured model are running and ready.\n\n"
+            "• Typed requests will run through local Ollama.\n"
+            "• Voice interaction will be unavailable until a dedicated speech pipeline is configured."
+        )
+        dtl.setWordWrap(True)
+        dtl.setFont(QFont("Courier New", 8))
+        dtl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
+        lay.addWidget(dtl)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+
+        cont_btn = QPushButton("▸  CONTINUE")
+        cont_btn.setFixedHeight(32)
+        cont_btn.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        cont_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        cont_btn.setStyleSheet(f"""
+            QPushButton {{ background: {C.PRI_GHO}; color: {C.PRI};
+                border: 1px solid {C.PRI}; border-radius: 3px; }}
+            QPushButton:hover {{ background: rgba(0,212,255,40); }}
+        """)
+        cont_btn.clicked.connect(lambda: self.confirmed.emit(True))
+        btn_row.addWidget(cont_btn)
+
+        cancel_btn = QPushButton("CANCEL")
+        cancel_btn.setFixedHeight(32)
+        cancel_btn.setFont(QFont("Courier New", 9))
+        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel_btn.setStyleSheet(f"""
+            QPushButton {{ background: transparent; color: {C.TEXT_MED};
+                border: 1px solid {C.BORDER}; border-radius: 3px; }}
+            QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; }}
+        """)
+        cancel_btn.clicked.connect(lambda: self.confirmed.emit(False))
+        cancel_btn.setDefault(True)
+        cancel_btn.setFocus()
+        btn_row.addWidget(cancel_btn)
+
+        lay.addLayout(btn_row)
+
+
+class LocalModeFailureOverlay(_HudOverlay):
+    """Failure dialog shown when transition to Local LLM Mode fails."""
+
+    action_chosen = pyqtSignal(str)   # "retry" or "cancel"
+    _OW = 460
+
+    def __init__(self, detail: str = "", parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(f"""
+            LocalModeFailureOverlay {{
+                background: rgba(16, 2, 0, 250);
+                border: 1px solid {C.ACC};
+                border-radius: 6px;
+            }}
+        """)
+        self.setFixedWidth(self._OW)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(20, 16, 20, 16)
+        lay.setSpacing(10)
+
+        hdr = QLabel("⚠  MODE TRANSITION FAILED")
+        hdr.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        hdr.setStyleSheet(f"color: {C.ACC}; background: transparent;")
+        lay.addWidget(hdr)
+
+        # EXACT PRIMARY MESSAGE REQUIRED:
+        ttl = QLabel("Jarvis cannot switch to Local LLM Mode.")
+        ttl.setWordWrap(True)
+        ttl.setFont(QFont("Courier New", 11, QFont.Weight.Bold))
+        ttl.setStyleSheet(f"color: {C.TEXT}; background: transparent;")
+        lay.addWidget(ttl)
+
+        if detail:
+            dtl = QLabel(detail)
+            dtl.setWordWrap(True)
+            dtl.setFont(QFont("Courier New", 8))
+            dtl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
+            lay.addWidget(dtl)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+
+        retry_btn = QPushButton("▸  RETRY")
+        retry_btn.setFixedHeight(32)
+        retry_btn.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        retry_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        retry_btn.setStyleSheet(f"""
+            QPushButton {{ background: transparent; color: {C.ACC};
+                border: 1px solid {C.ACC}; border-radius: 3px; }}
+            QPushButton:hover {{ background: rgba(255,107,0,40); }}
+        """)
+        retry_btn.clicked.connect(lambda: self.action_chosen.emit("retry"))
+        btn_row.addWidget(retry_btn)
+
+        stay_btn = QPushButton("CANCEL / STAY IN PREVIOUS MODE")
+        stay_btn.setFixedHeight(32)
+        stay_btn.setFont(QFont("Courier New", 8))
+        stay_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        stay_btn.setStyleSheet(f"""
+            QPushButton {{ background: transparent; color: {C.TEXT_MED};
+                border: 1px solid {C.BORDER}; border-radius: 3px; }}
+            QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; }}
+        """)
+        stay_btn.clicked.connect(lambda: self.action_chosen.emit("cancel"))
+        stay_btn.setDefault(True)
+        stay_btn.setFocus()
+        btn_row.addWidget(stay_btn)
+
+        lay.addLayout(btn_row)
 
 
 class AudioDeviceOverlay(_HudOverlay):
@@ -3001,6 +3152,9 @@ class MainWindow(QMainWindow):
     _quiz_sig       = pyqtSignal(str, object, object)  # (topic, questions, grader)
     _quiz_hide_sig  = pyqtSignal()
     _review_sig     = pyqtSignal(str, str, object, object)  # document review payload
+    _local_failure_sig = pyqtSignal(str, str, object, object)  # (primary, detail, on_retry, on_cancel)
+    _local_confirm_sig = pyqtSignal(object, object)            # (on_continue, on_cancel)
+    _local_mode_sig    = pyqtSignal(str)                       # (mode)
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -3031,7 +3185,25 @@ class MainWindow(QMainWindow):
         self.on_interrupt      = None   # callable: () -> None — stop JARVIS mid-speech
         self.on_voice_change   = None   # callable: () -> None — rebuild session with new voice
         self.on_audio_device_change = None  # callable: () -> None — reopen audio streams
+        self.on_engine_change  = None   # callable: (new_engine: str) -> None — mode transition
         self._confirm_overlay  = None   # live ConfirmBanner, if one is on screen
+        self._local_confirm_ov = None
+        self._local_failure_ov = None
+
+        try:
+            from core.engine_manager import LocalModeTransitionController
+        except ImportError:
+            from app.marklv.core.engine_manager import LocalModeTransitionController
+        from memory.config_manager import get_ai_engine
+
+        self._engine_controller = LocalModeTransitionController(
+            active_engine=get_ai_engine(),
+            show_confirm_dialog_fn=self._show_local_mode_confirm,
+            show_failure_dialog_fn=self._show_local_mode_failure,
+            notify_progress_fn=self._on_engine_progress,
+            on_mode_changed_fn=self._on_engine_mode_changed,
+        )
+
         self.get_plugins       = None   # callable: () -> list[dict], set by JarvisLive
         self.get_plugin_settings = None # callable: () -> list[dict] settings schemas, set by JarvisLive
         self.on_wake_toggle    = None   # callable: (enable: bool) -> str, set by JarvisLive
@@ -3284,6 +3456,9 @@ class MainWindow(QMainWindow):
         self._quiz_sig.connect(self._show_quiz)
         self._quiz_hide_sig.connect(self._hide_quiz)
         self._review_sig.connect(self._show_review)
+        self._local_failure_sig.connect(self._do_show_local_mode_failure)
+        self._local_confirm_sig.connect(self._do_show_local_mode_confirm)
+        self._local_mode_sig.connect(self._do_on_engine_mode_changed)
         self._cam_stop = threading.Event()
 
         # Camera preview overlay (child of central widget, positioned in resizeEvent)
@@ -5269,6 +5444,9 @@ class MainWindow(QMainWindow):
 
     def _ptt_hold(self, held: bool):
         """Report a windowed press/release to whoever owns the microphone."""
+        if held and getattr(self, "_engine_controller", None) and self._engine_controller.is_local_mode:
+            self._log.append_log("SYS: Voice interaction is unavailable in Local LLM Mode. Please type your message.")
+            return
         cb = getattr(self, "ptt_hold", None)
         if cb:
             try:
@@ -5374,7 +5552,7 @@ class MainWindow(QMainWindow):
             retheme_all_widgets(old, current_palette())
 
     def _apply_name_update(self, name: str, user_name: str, ui_color: str = "",
-                           voice: str = ""):
+                           voice: str = "", ai_engine: str = ""):
         """Update all name/theme-dependent UI elements and persist to config."""
         self._assistant_name = name.strip() or "JARVIS"
         display = self._assistant_name.upper()
@@ -5421,6 +5599,82 @@ class MainWindow(QMainWindow):
 
         if voice_changed and self.on_voice_change:
             self.on_voice_change()
+
+        # Engine mode transition if requested
+        if ai_engine and hasattr(self, "_engine_controller") and self._engine_controller:
+            self.request_engine_change(ai_engine)
+
+    def _show_local_mode_confirm(self, on_continue, on_cancel):
+        self._local_confirm_sig.emit(on_continue, on_cancel)
+
+    def _do_show_local_mode_confirm(self, on_continue, on_cancel):
+        self._hide_local_dialogs()
+        ov = LocalModeConfirmOverlay(parent=self.centralWidget())
+        def _on_ans(yes: bool):
+            ov.hide()
+            ov.deleteLater()
+            self._local_confirm_ov = None
+            if yes:
+                on_continue()
+            else:
+                on_cancel()
+                if getattr(self, "_customize_overlay", None):
+                    self._customize_overlay.set_engine(self._engine_controller.active_engine)
+        ov.confirmed.connect(_on_ans)
+        self._centre_overlay(ov)
+        ov.show()
+        ov.raise_()
+        self._local_confirm_ov = ov
+
+    def _show_local_mode_failure(self, primary_msg: str, detail_msg: str, on_retry, on_cancel):
+        self._local_failure_sig.emit(primary_msg, detail_msg, on_retry, on_cancel)
+
+    def _do_show_local_mode_failure(self, primary_msg: str, detail_msg: str, on_retry, on_cancel):
+        self._hide_local_dialogs()
+        ov = LocalModeFailureOverlay(detail=detail_msg, parent=self.centralWidget())
+        def _on_action(act: str):
+            ov.hide()
+            ov.deleteLater()
+            self._local_failure_ov = None
+            if act == "retry":
+                on_retry()
+            else:
+                on_cancel()
+                if getattr(self, "_customize_overlay", None):
+                    self._customize_overlay.set_engine(self._engine_controller.active_engine)
+        ov.action_chosen.connect(_on_action)
+        self._centre_overlay(ov)
+        ov.show()
+        ov.raise_()
+        self._local_failure_ov = ov
+
+    def _hide_local_dialogs(self):
+        for attr in ("_local_confirm_ov", "_local_failure_ov"):
+            ov = getattr(self, attr, None)
+            if ov is not None:
+                ov.hide()
+                ov.deleteLater()
+                setattr(self, attr, None)
+
+    def _on_engine_progress(self, stage: str, message: str):
+        self._log_sig.emit(f"SYS: [Local LLM] {message}")
+
+    def _on_engine_mode_changed(self, mode: str):
+        self._local_mode_sig.emit(mode)
+
+    def _do_on_engine_mode_changed(self, mode: str):
+        if mode == "Ollama":
+            self._sub_lbl.setText("Local LLM Mode — Voice Unavailable")
+            self._log_sig.emit("SYS: Local LLM Mode active. Voice is unavailable; type requests below.")
+        else:
+            self._sub_lbl.setText("Just A Rather Very Intelligent System")
+            self._log_sig.emit("SYS: Gemini Live mode active. Voice enabled.")
+        if self.on_engine_change:
+            self.on_engine_change(mode)
+
+    def request_engine_change(self, engine: str):
+        if hasattr(self, "_engine_controller") and self._engine_controller:
+            self._engine_controller.select_engine(engine)
 
     def _centre_overlay(self, ov) -> None:
         """Place a floating overlay in the middle of the HUD and show it."""
@@ -5699,6 +5953,18 @@ class JarvisUI:
     @on_audio_device_change.setter
     def on_audio_device_change(self, cb):
         self._win.on_audio_device_change = cb
+
+    @property
+    def on_engine_change(self):
+        return self._win.on_engine_change
+
+    @on_engine_change.setter
+    def on_engine_change(self, cb):
+        self._win.on_engine_change = cb
+
+    @property
+    def engine_controller(self):
+        return getattr(self._win, "_engine_controller", None)
 
     def show_confirm(self, title: str, detail: str) -> None:
         """Thread-safe: raise the irreversible-action gate. Called from action

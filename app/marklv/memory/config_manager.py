@@ -93,6 +93,27 @@ def save_ai_engine(engine: str) -> None:
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
 
 
+DEFAULT_LLM_MODEL = "qwen2.5:7b"
+
+
+def get_llm_model() -> str:
+    """Return the configured local LLM model name ('qwen2.5:7b' by default)."""
+    return load_api_keys().get("llm_model", DEFAULT_LLM_MODEL)
+
+
+def save_llm_model(model: str) -> None:
+    """Persist the choice of local LLM model ('qwen2.5:7b')."""
+    ensure_config_dir()
+    data: dict = {}
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+    data["llm_model"] = model.strip()
+    CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+
+
 # ── Assistant voice ──────────────────────────────────────────────────────────
 # Gemini Live prebuilt voices. Names are proper nouns — identical in every
 # language, so this list is safe to show verbatim in any locale.

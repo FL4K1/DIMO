@@ -581,6 +581,11 @@ class JarvisLive:
         self.ui.on_interrupt      = self.interrupt
         self.ui.on_voice_change   = self._on_voice_change     # voice picker â†’ rebuild session
         self.ui.on_audio_device_change = self._on_audio_device_change
+        self.ui.on_engine_change  = self._on_engine_change
+        self._local_coordinator   = None
+        self._local_history: list[dict] = []
+        self._ollama_host         = "http://localhost:11434"
+        self._ollama_model        = "llama3.2"
         self._reconnect_event: asyncio.Event | None = None
         self._reconnect_keep = True   # False â†’ next rebuild drops the resumption handle
 
@@ -836,14 +841,37 @@ class JarvisLive:
         manual = self._dashboard.get_manual_url()
         return url, key, f"{url}/auto-login?key={key}", manual
 
+    def _on_engine_change(self, mode: str):
+        """AI engine changed between Gemini Live and Local LLM Mode (Ollama)."""
+        print(f"[JARVIS] Engine mode changed to: {mode}")
+        if mode == "Ollama":
+            self.request_reconnect(keep_context=False, reason="switched to Local LLM Mode")
+        else:
+            self.request_reconnect(keep_context=False, reason="switched to Gemini Live")
+
+    def is_local_mode(self) -> bool:
+        try:
+            from memory.config_manager import get_ai_engine
+        except ImportError:
+            from app.marklv.memory.config_manager import get_ai_engine
+        return get_ai_engine() == "Ollama"
+
     def _on_text_command(self, text: str):
-        if not self._loop or not self.session:
+        if not self._loop:
+            return
+        if self.is_local_mode():
+            asyncio.run_coroutine_threadsafe(
+                self._handle_local_text_command(text),
+                self._loop
+            )
+            return
+        if not self.session:
             return
         # Respect wake-word sleep: a typed command must not be answered while
         # asleep either (the sleep gate is not just for the mic). Wake first with
         # "Hey Jarvis" or the WAKE NOW button.
         if self._wake_enabled and not self._awake:
-            self.ui.write_log("SYS: I'm asleep â€” say 'Hey Jarvis' or tap WAKE NOW first.")
+            self.ui.write_log("SYS: I'm asleep — say 'Hey Jarvis' or tap WAKE NOW first.")
             return
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
@@ -852,6 +880,243 @@ class JarvisLive:
             ),
             self._loop
         )
+
+    async def _handle_local_text_command(self, text: str):
+        """Handle typed command in Local LLM Mode using LocalTurnCoordinator."""
+        clean_text = str(text or "").strip()
+        if not clean_text:
+            return
+
+        print(f"[JARVIS-LOCAL] User text: {clean_text}")
+        self.ui.write_log(f"You: {clean_text}")
+        self._session_log.append(f"You: {clean_text}")
+        if self._dashboard:
+            asyncio.create_task(self._dashboard.broadcast({
+                "type": "log", "speaker": "user",
+                "text": clean_text,
+                "ts": datetime.now().isoformat(),
+            }))
+
+        self.ui.set_state("THINKING")
+
+        if getattr(self, "_local_coordinator", None) is None:
+            self._init_local_coordinator()
+
+        tool_decls = self._get_local_tool_declarations()
+        system_prompt = self._get_local_system_prompt()
+
+        loop = asyncio.get_event_loop()
+        try:
+            result = await loop.run_in_executor(
+                None,
+                lambda: self._local_coordinator.execute_turn(
+                    user_text=clean_text,
+                    conversation_history=self._local_history,
+                    tool_declarations=tool_decls,
+                    system_prompt=system_prompt,
+                )
+            )
+        except Exception as e:
+            err_msg = f"Local coordinator execution failed: {e}"
+            print(f"[JARVIS-LOCAL] ❌ {err_msg}")
+            self.ui.write_log(f"SYS: {err_msg}")
+            self.ui.set_state("IDLE")
+            return
+
+        if result.is_success:
+            self._local_history = result.updated_history
+            reply = result.content.strip()
+            if reply:
+                self.ui.write_log(f"{self._asst_name}: {reply}")
+                self._session_log.append(f"{self._asst_name}: {reply}")
+                if self._dashboard:
+                    asyncio.create_task(self._dashboard.broadcast({
+                        "type": "log", "speaker": "jarvis",
+                        "text": reply,
+                        "ts": datetime.now().isoformat(),
+                    }))
+        else:
+            err = result.error_message or f"Local inference error: {result.status.value}"
+            print(f"[JARVIS-LOCAL] ❌ {err}")
+            self.ui.write_log(f"SYS: {err}")
+
+        self.ui.set_state("IDLE")
+
+    def _init_local_coordinator(self):
+        """Initialize LocalTurnCoordinator with verified local Ollama client."""
+        try:
+            from core.local_turn_coordinator import LocalTurnCoordinator, DefaultOllamaChatClient, is_local_endpoint
+            from core.llm_client import get_llm_settings, get_llm_provider
+        except ImportError:
+            from app.marklv.core.local_turn_coordinator import LocalTurnCoordinator, DefaultOllamaChatClient, is_local_endpoint
+            from app.marklv.core.llm_client import get_llm_settings, get_llm_provider
+
+        # Verify that configured provider is Ollama
+        provider = get_llm_provider()
+        if provider != "ollama":
+            err = f"Configured LLM provider '{provider}' is not supported in Local LLM Mode. Only Ollama is supported."
+            self.ui.write_log(f"SYS: ❌ {err}")
+            self._local_coordinator = None
+            return
+
+        # Use verified manager settings if available, else llm_settings
+        controller = getattr(self.ui, "engine_controller", None)
+        if (
+            controller
+            and getattr(controller, "ollama_manager", None)
+            and hasattr(controller.ollama_manager, "host")
+            and isinstance(controller.ollama_manager.host, str)
+        ):
+            host = controller.ollama_manager.host
+            model_name = str(controller.ollama_manager.model)
+        else:
+            url, model = get_llm_settings()
+            host = url or "http://localhost:11434"
+            model_name = model or "qwen2.5:7b"
+
+        if not is_local_endpoint(host):
+            err = f"Configured host '{host}' is not a valid local loopback address."
+            self.ui.write_log(f"SYS: ❌ {err}")
+            self._local_coordinator = None
+            return
+
+        self._ollama_host = host
+        self._ollama_model = model_name
+        self._local_history = []
+
+        client = DefaultOllamaChatClient(host=host, model=model_name)
+        self._local_coordinator = LocalTurnCoordinator(
+            llm_client=client,
+            dispatcher=self._dispatch_local_tool,
+            host=host,
+            model=model_name,
+            max_tool_rounds=3,
+        )
+        print(f"[JARVIS] Local coordinator initialized for {host} ({model_name})")
+
+    def _get_local_system_prompt(self) -> str:
+        """System prompt for local Ollama conversation."""
+        prompt = f"You are {self._asst_name}, a helpful and concise personal AI assistant running locally on the user's PC."
+        if getattr(self, "_user_name", ""):
+            prompt += f" The user's name is {self._user_name}."
+        prompt += " Answer directly and concisely. When performing actions, call the available tools."
+        return prompt
+
+    def _get_local_tool_declarations(self) -> list[dict]:
+        """Combine inline, action, and plugin declarations, filtering out cloud-dependent tools."""
+        try:
+            from core.engine_manager import filter_local_tool_declarations
+        except ImportError:
+            from app.marklv.core.engine_manager import filter_local_tool_declarations
+
+        all_decls = []
+        for t in TOOL_DECLARATIONS:
+            if isinstance(t, dict):
+                all_decls.append(dict(t))
+
+        for d in self._action_registry.get_tool_declarations():
+            if isinstance(d, dict):
+                all_decls.append(dict(d))
+
+        for p in self._plugin_registry.get_tool_declarations():
+            if isinstance(p, dict):
+                all_decls.append(dict(p))
+
+        return filter_local_tool_declarations(all_decls)
+
+    def _dispatch_local_tool(self, name: str, args: dict) -> str:
+        """Dispatcher callback for LocalTurnCoordinator."""
+        try:
+            from core.engine_manager import is_tool_allowed_in_local_mode
+        except ImportError:
+            from app.marklv.core.engine_manager import is_tool_allowed_in_local_mode
+
+        if not is_tool_allowed_in_local_mode(name):
+            err = f"Tool '{name}' is unavailable in Local LLM Mode because it depends on cloud AI services."
+            print(f"[JARVIS-LOCAL] ❌ Blocked cloud-dependent tool: {name}")
+            return err
+
+        return self._execute_marklv_tool(name, args)
+
+    def _execute_marklv_tool(self, name: str, args: dict) -> str:
+        """Unified Mark-LV tool execution pipeline for inline tools, discovered actions, and plugins."""
+        if name == "save_memory":
+            category = args.get("category", "notes")
+            key      = args.get("key", "")
+            value    = args.get("value", "")
+            if key and value:
+                update_memory({category: {key: {"value": value}}})
+                print(f"[Memory] 💾 save_memory: {category}/{key} = {value}")
+            return "ok"
+
+        try:
+            if name == "recall_memory":
+                return str(search_memory(args.get("query", ""), limit=8))
+
+            elif name == "undo":
+                if str(args.get("action", "")).lower().strip() == "list":
+                    items = undo_stack.history()
+                    return ("Things I can undo, most recent first:\n"
+                            + "\n".join(f"{i+1}. {t}" for i, t in enumerate(items))
+                            ) if items else "I have not changed anything I can undo yet."
+                else:
+                    return str(undo_stack.undo_last())
+
+            elif name == "screen_process":
+                return "Vision screen processing is unavailable in this mode."
+
+            elif name == "close_camera":
+                self.ui.stop_camera_stream()
+                return "Camera closed."
+
+            elif name == "system_status":
+                return str(get_system_status())
+
+            elif name == "manage_monitor":
+                action = args.get("action", "").lower().strip()
+                topic  = args.get("topic", "").strip()
+                if action == "add" and topic:
+                    return str(add_monitor(topic))
+                elif action == "remove" and topic:
+                    return str(remove_monitor(topic))
+                elif action == "list":
+                    topics = list_monitors()
+                    return ("Monitoring: " + ", ".join(topics)) if topics else "No topics are being monitored."
+                else:
+                    return "Specify action (add/remove/list) and a topic."
+
+            elif name == "shutdown_jarvis":
+                self.ui.write_log("SYS: Shutdown requested.")
+                import os as _os
+                threading.Thread(target=lambda: (time.sleep(1.0), _os._exit(0)), daemon=True).start()
+                return "Shutting down Jarvis."
+
+            elif self._action_registry.has(name):
+                if name == "file_processor" and not args.get("file_path") and self.ui.current_file:
+                    args["file_path"] = self.ui.current_file
+                _ctx = {"player": self.ui, "speak": self.speak,
+                        "response": None, "session_memory": None}
+                r = self._action_registry.run(name, args, _ctx)
+                result = r or "Done."
+                if (name == "web_search" and r
+                        and not r.startswith("No results")
+                        and not r.startswith("Search failed")):
+                    _mode  = args.get("mode", "search")
+                    _query = args.get("query") or ", ".join(args.get("items", []))
+                    _label = f"{_mode.upper()} — {_query[:38]}" if _query else _mode.upper()
+                    self.ui.show_content(_label, r)
+                return str(result)
+
+            elif self._plugin_registry.has(name):
+                r = self._plugin_registry.run(name, args, player=self.ui, session_memory=None)
+                return str(r or "Done.")
+
+            else:
+                return f"Unknown tool: {name}"
+
+        except Exception as e:
+            traceback.print_exc()
+            return f"Tool '{name}' failed: {e}"
 
     def _tail_active(self) -> bool:
         """True while the speakers may still be finishing our last sentence."""
@@ -906,7 +1171,11 @@ class JarvisLive:
         return scope
 
     def _on_ptt(self, held: bool) -> None:
-        """Chord pressed or released â€” may arrive on the hotkey thread."""
+        """Chord pressed or released — may arrive on the hotkey thread."""
+        if self.is_local_mode():
+            if held:
+                self.ui.write_log("SYS: Voice interaction is unavailable in Local LLM Mode. Please type your message.")
+            return
         self._ptt_held = held
         if held:
             # Holding the key is also a way to wake it, so push-to-talk works
@@ -1127,17 +1396,17 @@ class JarvisLive:
         name = fc.name
         args = dict(fc.args or {})
 
-        print(f"[JARVIS] ðŸ”§ {name}  {args}")
+        print(f"[JARVIS] 🔧 {name}  {args}")
         self.ui.set_state("THINKING")
 
-
+        loop = asyncio.get_event_loop()
         if name == "save_memory":
             category = args.get("category", "notes")
             key      = args.get("key", "")
             value    = args.get("value", "")
             if key and value:
                 update_memory({category: {key: {"value": value}}})
-                print(f"[Memory] ðŸ’¾ save_memory: {category}/{key} = {value}")
+                print(f"[Memory] 💾 save_memory: {category}/{key} = {value}")
             if not self.ui.muted:
                 self.ui.set_state("LISTENING")
             return types.FunctionResponse(
@@ -1145,143 +1414,63 @@ class JarvisLive:
                 response={"result": "ok", "silent": True}
             )
 
-        loop   = asyncio.get_event_loop()
-        result = "Done."
-
-        try:
-            if name == "recall_memory":
-                # Local file search: no network, no second model. Kept out of
-                # the executor deliberately â€” it is a dictionary scan over a few
-                # hundred short strings, and a thread hop would cost more than
-                # the work itself.
-                result = search_memory(args.get("query", ""), limit=8)
-
-            elif name == "undo":
-                if str(args.get("action", "")).lower().strip() == "list":
-                    items = undo_stack.history()
-                    result = ("Things I can undo, most recent first:\n"
-                              + "\n".join(f"{i+1}. {t}" for i, t in enumerate(items))
-                              ) if items else "I have not changed anything I can undo yet."
-                else:
-                    result = await loop.run_in_executor(None, undo_stack.undo_last)
-
-            elif name == "screen_process":
-                import time as _t_mod
-                _now = _t_mod.monotonic()
-                _cooldown = 4.0  # seconds â€” covers echo window after speaking ends
-                if self._vision_busy or (_now - self._vision_last_time) < _cooldown:
-                    _wait = max(0, _cooldown - (_now - self._vision_last_time))
-                    print(f"[Vision] â³ Cooldown active ({_wait:.1f}s remaining) â€” ignoring duplicate call")
-                    result = "Vision is still processing the previous request. I will not call this again."
-                else:
-                    self._vision_busy      = True
-                    self._vision_last_time = _now
-                    angle     = args.get("angle", "screen").lower()
-                    user_text = args.get("text", "What do you see?")
-                    if angle == "camera":
-                        img_b, mime_t = await loop.run_in_executor(None, _capture_camera)
-                        self.ui.start_camera_stream()
-                        self._vision_cam_active = True
-                        print(f"[Vision] ðŸ“· Camera: {len(img_b):,} bytes")
-                        _stall = "camera"
-                    else:
-                        img_b, mime_t = await loop.run_in_executor(None, _capture_screen)
-                        print(f"[Vision] ðŸ–¥ï¸  Screen: {len(img_b):,} bytes")
-                        _stall = "screen"
-                    self._pending_vision = (img_b, mime_t, user_text, angle)
-                    # The image is attached to this same exchange, so there is
-                    # nothing to stall for and nothing to announce. Asking for an
-                    # acknowledgement here is what produced two spoken answers â€”
-                    # the model filled that turn by answering the question from
-                    # imagination, then answered it again once it could see.
-                    result = (
-                        f"[VISION_ACTIVE] {_stall.capitalize()} captured and attached to this "
-                        f"same exchange. Do not acknowledge and do not answer yet â€” the image "
-                        f"is arriving with this result. Reply once, from what you actually see "
-                        f"in it."
-                    )
-
-            elif name == "close_camera":
-                self.ui.stop_camera_stream()
-                result = "Camera closed."
-
-            elif name == "system_status":
-                r = await loop.run_in_executor(None, get_system_status)
-                result = str(r)
-
-            elif name == "manage_monitor":
-                action = args.get("action", "").lower().strip()
-                topic  = args.get("topic", "").strip()
-                if action == "add" and topic:
-                    result = await asyncio.to_thread(add_monitor, topic)
-                elif action == "remove" and topic:
-                    result = await asyncio.to_thread(remove_monitor, topic)
-                elif action == "list":
-                    topics = await asyncio.to_thread(list_monitors)
-                    result = ("Monitoring: " + ", ".join(topics)) if topics else "No topics are being monitored."
-                else:
-                    result = "Specify action (add/remove/list) and a topic."
-
-            elif name == "shutdown_jarvis":
-                self.ui.write_log("SYS: Shutdown requested.")
-                async def _do_shutdown():
-                    await self._save_session_summary()
-                    if self.session:
-                        try:
-                            await self.session.send_client_content(
-                                turns={"role": "user", "parts": [{"text": "Say a brief natural goodbye to the user."}]},
-                                turn_complete=True,
-                            )
-                        except Exception:
-                            pass
-                    await asyncio.sleep(1.5)
-                    import os as _os
-                    _os._exit(0)
-                asyncio.create_task(_do_shutdown())
-
-            elif self._action_registry.has(name):
-                # file_processor: fall back to the currently-uploaded file when none is given
-                if name == "file_processor" and not args.get("file_path") and self.ui.current_file:
-                    args["file_path"] = self.ui.current_file
-                _ctx = {"player": self.ui, "speak": self.speak,
-                        "response": None, "session_memory": None}
-                r = await loop.run_in_executor(None, lambda: self._action_registry.run(name, args, _ctx))
-                result = r or "Done."
-                # web_search: mirror results to the on-screen content panel
-                if (name == "web_search" and r
-                        and not r.startswith("No results")
-                        and not r.startswith("Search failed")):
-                    _mode  = args.get("mode", "search")
-                    _query = args.get("query") or ", ".join(args.get("items", []))
-                    _label = f"{_mode.upper()} â€” {_query[:38]}" if _query else _mode.upper()
-                    self.ui.show_content(_label, r)
-
+        elif name == "screen_process":
+            import time as _t_mod
+            _now = _t_mod.monotonic()
+            _cooldown = 4.0
+            if self._vision_busy or (_now - self._vision_last_time) < _cooldown:
+                _wait = max(0, _cooldown - (_now - self._vision_last_time))
+                print(f"[Vision] ⏳ Cooldown active ({_wait:.1f}s remaining) — ignoring duplicate call")
+                result = "Vision is still processing the previous request. I will not call this again."
             else:
-                if self._plugin_registry.has(name):
-                    r = await loop.run_in_executor(
-                        None,
-                        lambda: self._plugin_registry.run(name, args, player=self.ui, session_memory=None)
-                    )
-                    result = r or "Done."
+                self._vision_busy      = True
+                self._vision_last_time = _now
+                angle     = args.get("angle", "screen").lower()
+                user_text = args.get("text", "What do you see?")
+                if angle == "camera":
+                    img_b, mime_t = await loop.run_in_executor(None, _capture_camera)
+                    self.ui.start_camera_stream()
+                    self._vision_cam_active = True
+                    print(f"[Vision] 📷 Camera: {len(img_b):,} bytes")
+                    _stall = "camera"
                 else:
-                    result = f"Unknown tool: {name}"
+                    img_b, mime_t = await loop.run_in_executor(None, _capture_screen)
+                    print(f"[Vision] 🖥️   Screen: {len(img_b):,} bytes")
+                    _stall = "screen"
+                self._pending_vision = (img_b, mime_t, user_text, angle)
+                result = (
+                    f"[VISION_ACTIVE] {_stall.capitalize()} captured and attached to this "
+                    f"same exchange. Do not acknowledge and do not answer yet — the image "
+                    f"is arriving with this result. Reply once, from what you actually see "
+                    f"in it."
+                )
 
-        except Exception as e:
-            result = f"Tool '{name}' failed: {e}"
-            traceback.print_exc()
-            self.speak_error(name, e)
+        elif name == "shutdown_jarvis":
+            self.ui.write_log("SYS: Shutdown requested.")
+            async def _do_shutdown():
+                await self._save_session_summary()
+                if self.session:
+                    try:
+                        await self.session.send_client_content(
+                            turns={"role": "user", "parts": [{"text": "Say a brief natural goodbye to the user."}]},
+                            turn_complete=True,
+                        )
+                    except Exception:
+                        pass
+                await asyncio.sleep(1.5)
+                import os as _os
+                _os._exit(0)
+            asyncio.create_task(_do_shutdown())
+            result = "Shutting down Jarvis."
+
+        else:
+            result = await loop.run_in_executor(None, lambda: self._execute_marklv_tool(name, args))
 
         if not self.ui.muted:
             self.ui.set_state("LISTENING")
 
-        print(f"[JARVIS] ðŸ“¤ {name} â†’ {str(result)[:80]}")
+        print(f"[JARVIS] 📦 {name} → {str(result)[:80]}")
 
-        # A tool that declared itself NON_BLOCKING also says when its answer may
-        # re-enter the conversation. Without this the model finishes whatever it
-        # was saying and then reads the result out on top of it â€” which, for
-        # something like a phone call already ringing, is exactly the noise the
-        # non-blocking call was meant to avoid. Tools that declared nothing get
-        # the API default and behave as they always have.
         _sched = (self._action_registry.scheduling(name)
                   or self._plugin_registry.scheduling(name))
         _extra = {"scheduling": _sched} if _sched else {}
@@ -2056,16 +2245,22 @@ class JarvisLive:
     # â”€â”€ main loop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     async def _run_ollama_loop(self):
-        """Fallback local voice loop using Ollama & DIMO LangGraph."""
+        """Active local text conversation loop using Ollama & LocalTurnCoordinator."""
+        self.session = None
         self.ui.set_state("IDLE")
-        self.ui.write_log("[SYSTEM] Local Ollama Engine Active. Click WAKE or say 'Jarvis'/'Dimo'.")
-        
+        self.ui.write_log("SYS: Local LLM Mode active. Voice is unavailable; please use typed commands.")
+        print("[JARVIS] Local LLM Mode active. Voice is disabled; typed commands routed to local Ollama.")
+
+        self._init_local_coordinator()
+
         while True:
             from memory.config_manager import get_ai_engine
             if get_ai_engine() != "Ollama":
                 print("[JARVIS] Switching back to Gemini Live...")
                 break
-                
+            if self._reconnect_event and self._reconnect_event.is_set():
+                self._reconnect_event.clear()
+                break
             await asyncio.sleep(0.5)
 
     async def run(self):
