@@ -635,6 +635,11 @@ def execute_tool_loop(state: DimoState) -> dict:
                         logger.info("[Executor] ✅ Step %s done: %s", step_num, str(result_dict.get("result", ""))[:80])
                         step_ok = True
                         break
+                    elif result_dict.get("pending_confirmation"):
+                        logger.info("[Executor] ⏳ Step %s pending confirmation on HUD: %s", step_num, result_dict.get("result"))
+                        state["tool_output"] = result_dict.get("result", "Confirmation required on HUD before action can proceed.")
+                        state["step_results"] = step_results
+                        return state
                     else:
                         err = result_dict.get("error", "unknown error")
                         logger.warning("[Executor] ⚠️ Step %s attempt %d: %s", step_num, attempts, err)
