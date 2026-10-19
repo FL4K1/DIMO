@@ -586,7 +586,14 @@ class JarvisLive:
         self._local_history: list[dict] = []
         self._ollama_host         = "http://localhost:11434"
         self._ollama_model        = "llama3.2"
+        self._gemini_voice        = None
+        self._local_turn_lock: asyncio.Lock | None = None
         self._reconnect_event: asyncio.Event | None = None
+        try:
+            from memory.config_manager import save_ai_engine
+            save_ai_engine("Gemini Live")
+        except Exception:
+            pass
         self._reconnect_keep = True   # False â†’ next rebuild drops the resumption handle
 
         # â”€â”€ Session resumption â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -668,6 +675,8 @@ class JarvisLive:
     # â”€â”€ Wake word: state machine â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _wake_state(self) -> dict:
+        if self.is_local_mode():
+            return {"enabled": False, "awake": True, "ready": False}
         # A loaded, running detector is definitively ready; otherwise fall back
         # to the cheap on-disk model-file check (no Model construction).
         ready = bool(self._wake_detector and self._wake_detector.ready) or wake_is_ready()
@@ -725,6 +734,9 @@ class JarvisLive:
         """Enable/disable wake word from the settings UI. Returns a status token:
         'enabled' | 'disabled' | 'need_download'."""
         if enable:
+            if self.is_local_mode():
+                self.ui.write_log("SYS: Wake-word detection is unavailable in Local LLM Mode. Please use Push-to-Talk.")
+                return "disabled"
             if not wake_is_ready():
                 return "need_download"
             self._wake_enabled = True
@@ -861,7 +873,7 @@ class JarvisLive:
             return
         if self.is_local_mode():
             asyncio.run_coroutine_threadsafe(
-                self._handle_local_text_command(text),
+                self._handle_local_text_command(text, from_ui=True),
                 self._loop
             )
             return
@@ -881,66 +893,92 @@ class JarvisLive:
             self._loop
         )
 
-    async def _handle_local_text_command(self, text: str):
-        """Handle typed command in Local LLM Mode using LocalTurnCoordinator."""
+    async def _handle_local_text_command(self, text: str, speak: bool = False, from_ui: bool = False):
+        """Handle typed or spoken command in Local LLM Mode using LocalTurnCoordinator."""
         clean_text = str(text or "").strip()
         if not clean_text:
             return
 
-        print(f"[JARVIS-LOCAL] User text: {clean_text}")
-        self.ui.write_log(f"You: {clean_text}")
-        self._session_log.append(f"You: {clean_text}")
-        if self._dashboard:
-            asyncio.create_task(self._dashboard.broadcast({
-                "type": "log", "speaker": "user",
-                "text": clean_text,
-                "ts": datetime.now().isoformat(),
-            }))
+        turn_lock = getattr(self, "_local_turn_lock", None)
+        if turn_lock is None:
+            turn_lock = asyncio.Lock()
+            self._local_turn_lock = turn_lock
 
-        self.ui.set_state("THINKING")
+        async with turn_lock:
+            print(f"[JARVIS-LOCAL] User text: {clean_text}")
+            if not from_ui:
+                self.ui.write_log(f"You: {clean_text}")
+            self._session_log.append(f"You: {clean_text}")
+            if self._dashboard:
+                asyncio.create_task(self._dashboard.broadcast({
+                    "type": "log", "speaker": "user",
+                    "text": clean_text,
+                    "ts": datetime.now().isoformat(),
+                }))
 
-        if getattr(self, "_local_coordinator", None) is None:
-            self._init_local_coordinator()
+            self.ui.set_state("Processing locally")
 
-        tool_decls = self._get_local_tool_declarations()
-        system_prompt = self._get_local_system_prompt()
+            if getattr(self, "_local_coordinator", None) is None:
+                self._init_local_coordinator()
 
-        loop = asyncio.get_event_loop()
-        try:
-            result = await loop.run_in_executor(
-                None,
-                lambda: self._local_coordinator.execute_turn(
-                    user_text=clean_text,
-                    conversation_history=self._local_history,
-                    tool_declarations=tool_decls,
-                    system_prompt=system_prompt,
+            tool_decls = self._get_local_tool_declarations()
+            system_prompt = self._get_local_system_prompt()
+
+            loop = asyncio.get_event_loop()
+            try:
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: self._local_coordinator.execute_turn(
+                        user_text=clean_text,
+                        conversation_history=self._local_history,
+                        tool_declarations=tool_decls,
+                        system_prompt=system_prompt,
+                    )
                 )
-            )
-        except Exception as e:
-            err_msg = f"Local coordinator execution failed: {e}"
-            print(f"[JARVIS-LOCAL] ❌ {err_msg}")
-            self.ui.write_log(f"SYS: {err_msg}")
-            self.ui.set_state("IDLE")
-            return
+            except Exception as e:
+                err_msg = f"Local coordinator execution failed: {e}"
+                print(f"[JARVIS-LOCAL] ❌ {err_msg}")
+                self.ui.write_log(f"SYS: {err_msg}")
+                self.ui.set_state("Local inference failed")
+                return
 
-        if result.is_success:
-            self._local_history = result.updated_history
-            reply = result.content.strip()
-            if reply:
-                self.ui.write_log(f"{self._asst_name}: {reply}")
-                self._session_log.append(f"{self._asst_name}: {reply}")
-                if self._dashboard:
-                    asyncio.create_task(self._dashboard.broadcast({
-                        "type": "log", "speaker": "jarvis",
-                        "text": reply,
-                        "ts": datetime.now().isoformat(),
-                    }))
-        else:
-            err = result.error_message or f"Local inference error: {result.status.value}"
-            print(f"[JARVIS-LOCAL] ❌ {err}")
-            self.ui.write_log(f"SYS: {err}")
+            if result.is_success:
+                self._local_history = result.updated_history
+                reply = result.content.strip()
+                if reply:
+                    self.ui.write_log(f"{self._asst_name}: {reply}")
+                    self._session_log.append(f"{self._asst_name}: {reply}")
+                    if self._dashboard:
+                        asyncio.create_task(self._dashboard.broadcast({
+                            "type": "log", "speaker": "jarvis",
+                            "text": reply,
+                            "ts": datetime.now().isoformat(),
+                        }))
+                    if speak and getattr(self, "_gemini_voice", None) and self._gemini_voice.is_available:
+                        self.ui.set_state("Speaking")
+                        await self._gemini_voice.speak(
+                            reply,
+                            self.audio_in_queue,
+                            self._turn_done_event,
+                            ui_logger=self.ui.write_log,
+                        )
+            else:
+                err = result.error_message or f"Local inference error: {result.status.value}"
+                print(f"[JARVIS-LOCAL] ❌ {err}")
+                self.ui.write_log(f"SYS: {err}")
+                self.ui.set_state("Local inference failed")
 
-        self.ui.set_state("IDLE")
+            speaking_lock = getattr(self, "_speaking_lock", None)
+            if speaking_lock is not None:
+                with speaking_lock:
+                    is_speaking = getattr(self, "_is_speaking", False)
+            else:
+                is_speaking = getattr(self, "_is_speaking", False)
+            if not is_speaking and result.is_success:
+                if getattr(self, "_gemini_voice", None) and self._gemini_voice.is_available:
+                    self.ui.set_state("Voice ready")
+                else:
+                    self.ui.set_state("Voice unavailable")
 
     def _init_local_coordinator(self):
         """Initialize LocalTurnCoordinator with verified local Ollama client."""
@@ -994,12 +1032,63 @@ class JarvisLive:
         )
         print(f"[JARVIS] Local coordinator initialized for {host} ({model_name})")
 
+    def _init_local_voice(self):
+        """Initialize Gemini speech services for Local LLM Mode."""
+        try:
+            from core.gemini_voice import GeminiVoiceService, GeminiVoiceConfig
+        except ImportError:
+            from app.marklv.core.gemini_voice import GeminiVoiceService, GeminiVoiceConfig
+
+        api_key = None
+        try:
+            api_key = _get_api_key()
+        except Exception:
+            pass
+
+        voice_name = get_voice()
+        config = GeminiVoiceConfig(voice_name=voice_name)
+        self._gemini_voice = GeminiVoiceService(
+            api_key=api_key,
+            config=config,
+            ui_logger=self.ui.write_log,
+        )
+        self._gemini_voice.set_transcript_callback(self._on_local_voice_transcript)
+        self._gemini_voice.set_status_callback(self._on_local_voice_status)
+
+    def _on_local_voice_transcript(self, transcript: str):
+        """Called when GeminiTranscriber commits a recognized spoken turn."""
+        if not self._loop:
+            return
+        asyncio.run_coroutine_threadsafe(
+            self._handle_local_text_command(transcript, speak=True, from_ui=False),
+            self._loop,
+        )
+
+    def _on_local_voice_status(self, status: Any, message: str | None = None):
+        """Update HUD state when GeminiVoiceService lifecycle status changes."""
+        if not self.is_local_mode():
+            return
+        speaking_lock = getattr(self, "_speaking_lock", None)
+        speaking = False
+        if speaking_lock is not None:
+            with speaking_lock:
+                speaking = getattr(self, "_is_speaking", False)
+        if not speaking:
+            try:
+                st_val = getattr(status, "value", str(status))
+                self.ui.set_state(st_val)
+            except Exception:
+                pass
+
     def _get_local_system_prompt(self) -> str:
         """System prompt for local Ollama conversation."""
         prompt = f"You are {self._asst_name}, a helpful and concise personal AI assistant running locally on the user's PC."
         if getattr(self, "_user_name", ""):
             prompt += f" The user's name is {self._user_name}."
-        prompt += " Answer directly and concisely. When performing actions, call the available tools."
+        prompt += (
+            " Voice input (via Push-to-Talk) and spoken audio responses (via text-to-speech) are active and fully supported in this interface. "
+            "You can converse naturally in speech or text. Answer directly and concisely. When performing actions, call the available tools."
+        )
         return prompt
 
     def _get_local_tool_declarations(self) -> list[dict]:
@@ -1139,9 +1228,15 @@ class JarvisLive:
             # tail expires. What the guard learned about the room always stays.
             self._out_level = 0.0
         if value:
-            self.ui.set_state("SPEAKING")
+            self.ui.set_state("Speaking")
         elif not self.ui.muted:
-            self.ui.set_state("LISTENING")
+            if self.is_local_mode():
+                if getattr(self, "_gemini_voice", None) and self._gemini_voice.is_available:
+                    self.ui.set_state("Voice ready")
+                else:
+                    self.ui.set_state("Voice unavailable")
+            else:
+                self.ui.set_state("LISTENING")
 
     def set_push_to_talk(self, enabled: bool) -> str:
         """Turn hold-to-talk on or off. Returns the scope actually achieved."""
@@ -1158,12 +1253,12 @@ class JarvisLive:
         if self._ptt is None:
             self._ptt = PushToTalk(self._on_ptt)
         scope = self._ptt.start()
-        # A window-scoped chord is a real limitation, not a detail â€” say it once
+        # A window-scoped chord is a real limitation, not a detail — say it once
         # in the log so nobody wonders why it does nothing while another app is
         # focused. Reporting it must never be able to undo the thing it reports.
         try:
             self.ui.write_log(
-                f"SYS: Push-to-talk on â€” hold {self._ptt.label}"
+                f"SYS: Push-to-talk on — hold {self._ptt.label}"
                 + ("." if scope == "global"
                    else " (works while this window is focused)."))
         except Exception:
@@ -1173,8 +1268,27 @@ class JarvisLive:
     def _on_ptt(self, held: bool) -> None:
         """Chord pressed or released — may arrive on the hotkey thread."""
         if self.is_local_mode():
+            self._ptt_held = held
+            if not getattr(self, "_gemini_voice", None) or not self._gemini_voice.is_available:
+                if held:
+                    self.ui.write_log("SYS: Voice interaction is unavailable in Local LLM Mode. Please type your message.")
+                    try:
+                        self.ui.set_state("Voice unavailable")
+                    except Exception:
+                        pass
+                return
             if held:
-                self.ui.write_log("SYS: Voice interaction is unavailable in Local LLM Mode. Please type your message.")
+                self._gemini_voice.start_listening()
+                try:
+                    self.ui.set_state("Listening")
+                except Exception:
+                    pass
+            else:
+                self._gemini_voice.stop_listening()
+                try:
+                    self.ui.set_state("Transcribing")
+                except Exception:
+                    pass
             return
         self._ptt_held = held
         if held:
@@ -1500,6 +1614,22 @@ class JarvisLive:
         loop = asyncio.get_event_loop()
 
         def callback(indata, frames, time_info, status):
+            if self.is_local_mode():
+                if (
+                    not self.ui.muted
+                    and not self._phone_active
+                    and getattr(self, "_gemini_voice", None)
+                    and self._gemini_voice.is_listening
+                ):
+                    with self._speaking_lock:
+                        if not self._is_speaking:
+                            self._gemini_voice.feed_audio(indata.tobytes())
+                            try:
+                                self.ui.set_audio_level(_pcm_level(indata))
+                            except Exception:
+                                pass
+                return
+
             # â”€â”€ Wake-word gate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             # While asleep, the mic audio NEVER goes to Gemini (nothing is
             # streamed, so JARVIS can't respond to speech not addressed to it and
@@ -2245,27 +2375,61 @@ class JarvisLive:
     # â”€â”€ main loop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     async def _run_ollama_loop(self):
-        """Active local text conversation loop using Ollama & LocalTurnCoordinator."""
+        """Active local text and voice conversation loop using Ollama & Gemini Speech Services."""
         self.session = None
-        self.ui.set_state("IDLE")
-        self.ui.write_log("SYS: Local LLM Mode active. Voice is unavailable; please use typed commands.")
-        print("[JARVIS] Local LLM Mode active. Voice is disabled; typed commands routed to local Ollama.")
+        self.audio_in_queue = asyncio.Queue()
+        self.out_queue = asyncio.Queue(maxsize=200)
+        self._turn_done_event = asyncio.Event()
 
         self._init_local_coordinator()
+        self._init_local_voice()
 
-        while True:
-            from memory.config_manager import get_ai_engine
-            if get_ai_engine() != "Ollama":
-                print("[JARVIS] Switching back to Gemini Live...")
-                break
-            if self._reconnect_event and self._reconnect_event.is_set():
-                self._reconnect_event.clear()
-                break
-            await asyncio.sleep(0.5)
+        if self._gemini_voice and self._gemini_voice.is_available:
+            self.ui.set_state("Voice ready")
+            self.ui.write_log("SYS: Local LLM Mode active (Qwen2.5 7B). Voice enabled via Gemini Speech Services (Push-to-Talk).")
+            print("[JARVIS] Local LLM Mode active. Local Ollama reasoning with Gemini speech services.")
+        else:
+            self.ui.set_state("Voice unavailable")
+            self.ui.write_log("SYS: Local LLM Mode active. Voice is unavailable (Gemini credentials not found); please use typed commands.")
+            print("[JARVIS] Local LLM Mode active. Voice is disabled; typed commands routed to local Ollama.")
+
+        t_listen = asyncio.create_task(self._listen_audio())
+        t_play = asyncio.create_task(self._play_audio())
+        t_voice = (
+            asyncio.create_task(self._gemini_voice.run_loop())
+            if (self._gemini_voice and self._gemini_voice.is_available)
+            else None
+        )
+        tasks = [t for t in (t_listen, t_play, t_voice) if t is not None]
+
+        try:
+            while True:
+                from memory.config_manager import get_ai_engine
+                if get_ai_engine() != "Ollama":
+                    print("[JARVIS] Switching back to Gemini Live...")
+                    break
+                if self._reconnect_event and self._reconnect_event.is_set():
+                    self._reconnect_event.clear()
+                    break
+                await asyncio.sleep(0.5)
+        finally:
+            if self._gemini_voice:
+                self._gemini_voice.stop()
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def run(self):
         self._loop = asyncio.get_event_loop()
         self._reconnect_event = asyncio.Event()
+
+        # Every fresh Jarvis launch starts in Gemini Online Mode by default.
+        # Local LLM Mode must be an explicit, manual switch.
+        try:
+            from memory.config_manager import save_ai_engine
+            save_ai_engine("Gemini Live")
+        except Exception:
+            pass
 
         # â”€â”€ Wire the shared core services to the interface â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         # The confirmation gate is useless without a way to ask, and a memory
@@ -2519,6 +2683,11 @@ class JarvisLive:
             await asyncio.sleep(delay)
 
 def main():
+    try:
+        from memory.config_manager import save_ai_engine
+        save_ai_engine("Gemini Live")
+    except Exception:
+        pass
     ui = JarvisUI("face.png")
 
     def runner():

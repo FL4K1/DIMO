@@ -873,11 +873,12 @@ class HudCanvas(QWidget):
                 _main = _acc = qcol(C.MUTED_C)
             else:
                 _main = qcol(C.PRI)
-                if self.speaking:
+                st_upper = str(self.state).upper()
+                if self.speaking or st_upper == "SPEAKING":
                     _acc = qcol(C.ACC)
-                elif self.state in ("THINKING", "PROCESSING"):
+                elif st_upper in ("THINKING", "PROCESSING", "PROCESSING LOCALLY", "TRANSCRIBING"):
                     _acc = qcol(C.ACC2)
-                elif self.state == "LISTENING":
+                elif st_upper == "LISTENING":
                     _acc = qcol(C.GREEN)
                 else:
                     _acc = qcol(C.PRI)
@@ -895,19 +896,21 @@ class HudCanvas(QWidget):
 
         # status text
         sy = _sy_status
+        st_upper = str(self.state).upper()
         if self.muted:
             txt, col = "⊘  MUTED",     qcol(C.MUTED_C)
-        elif self.speaking:
+        elif self.speaking or st_upper == "SPEAKING":
             txt, col = "●  SPEAKING",  qcol(C.ACC)
-        elif self.state == "THINKING":
-            sym = "◈" if self._blink else "◇"
-            txt, col = f"{sym}  THINKING",   qcol(C.ACC2)
-        elif self.state == "PROCESSING":
+        elif st_upper in ("THINKING", "PROCESSING", "PROCESSING LOCALLY", "TRANSCRIBING"):
             sym = "▷" if self._blink else "▶"
-            txt, col = f"{sym}  PROCESSING", qcol(C.ACC2)
-        elif self.state == "LISTENING":
+            txt, col = f"{sym}  {self.state.upper()}", qcol(C.ACC2)
+        elif st_upper == "LISTENING":
             sym = "●" if self._blink else "○"
             txt, col = f"{sym}  LISTENING",  qcol(C.GREEN)
+        elif st_upper in ("LOCAL INFERENCE FAILED", "VOICE UNAVAILABLE", "VOICE ERROR"):
+            sym = "⚠"
+            col_warn = qcol(C.RED) if hasattr(C, "RED") else qcol(C.ACC2)
+            txt, col = f"{sym}  {self.state.upper()}", col_warn
         else:
             sym = "●" if self._blink else "○"
             txt, col = f"{sym}  {self.state}", qcol(C.PRI)
@@ -2125,8 +2128,10 @@ class LocalModeConfirmOverlay(_HudOverlay):
 
         dtl = QLabel(
             "Jarvis will verify that the local Ollama server and configured model are running and ready.\n\n"
-            "• Typed requests will run through local Ollama.\n"
-            "• Voice interaction will be unavailable until a dedicated speech pipeline is configured."
+            "• LLM: Local Ollama / Qwen2.5 7B (local reasoning & tool dispatch).\n"
+            "• Voice input: Gemini cloud transcription (microphone audio sent to Google for STT).\n"
+            "• Voice output: Gemini cloud text-to-speech (final text sent to Google for TTS).\n"
+            "• Wake-word is disabled in Local LLM Mode; please use Push-to-Talk."
         )
         dtl.setWordWrap(True)
         dtl.setFont(QFont("Courier New", 8))
@@ -3194,10 +3199,16 @@ class MainWindow(QMainWindow):
             from core.engine_manager import LocalModeTransitionController
         except ImportError:
             from app.marklv.core.engine_manager import LocalModeTransitionController
-        from memory.config_manager import get_ai_engine
+        from memory.config_manager import get_ai_engine, save_ai_engine
+
+        # Fresh launch defaults to Gemini Live
+        try:
+            save_ai_engine("Gemini Live")
+        except Exception:
+            pass
 
         self._engine_controller = LocalModeTransitionController(
-            active_engine=get_ai_engine(),
+            active_engine="Gemini Live",
             show_confirm_dialog_fn=self._show_local_mode_confirm,
             show_failure_dialog_fn=self._show_local_mode_failure,
             notify_progress_fn=self._on_engine_progress,
@@ -5444,9 +5455,6 @@ class MainWindow(QMainWindow):
 
     def _ptt_hold(self, held: bool):
         """Report a windowed press/release to whoever owns the microphone."""
-        if held and getattr(self, "_engine_controller", None) and self._engine_controller.is_local_mode:
-            self._log.append_log("SYS: Voice interaction is unavailable in Local LLM Mode. Please type your message.")
-            return
         cb = getattr(self, "ptt_hold", None)
         if cb:
             try:
@@ -5455,6 +5463,9 @@ class MainWindow(QMainWindow):
                 pass
 
     def _toggle_wake_word(self):
+        if getattr(self, "_engine_controller", None) and self._engine_controller.is_local_mode:
+            self._log.append_log("SYS: Wake-word detection is unavailable in Local LLM Mode. Please use Push-to-Talk.")
+            return
         st = self._wake_state()
         if not st["ready"]:
             # First time: download openwakeword + model in a worker thread.
@@ -5664,8 +5675,8 @@ class MainWindow(QMainWindow):
 
     def _do_on_engine_mode_changed(self, mode: str):
         if mode == "Ollama":
-            self._sub_lbl.setText("Local LLM Mode — Voice Unavailable")
-            self._log_sig.emit("SYS: Local LLM Mode active. Voice is unavailable; type requests below.")
+            self._sub_lbl.setText("Local LLM Mode — Qwen2.5 7B (Gemini Speech)")
+            self._log_sig.emit("SYS: Local LLM Mode active (Qwen2.5 7B). Gemini Speech enabled for voice; typed commands supported.")
         else:
             self._sub_lbl.setText("Just A Rather Very Intelligent System")
             self._log_sig.emit("SYS: Gemini Live mode active. Voice enabled.")
@@ -5846,7 +5857,7 @@ class MainWindow(QMainWindow):
 
     def _apply_state(self, state: str):
         self.hud.state    = state
-        self.hud.speaking = (state == "SPEAKING")
+        self.hud.speaking = (str(state).upper() == "SPEAKING")
 
     def _check_config(self) -> bool:
         if not API_FILE.exists(): return False

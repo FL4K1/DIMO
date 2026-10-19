@@ -322,6 +322,7 @@ class TestLocalLLMMode(unittest.TestCase):
             mock_ui.write_log.assert_any_call("You: hello local")
             mock_ui.write_log.assert_any_call("JARVIS: Local response to user query.")
             self.assertEqual(live._local_history, mock_coord.execute_turn.return_value.updated_history)
+            live._loop.close()
 
     # ──────────────────────────────────────────────────────────────────────────
     # 7. A local inference failure never causes cloud fallback
@@ -360,6 +361,7 @@ class TestLocalLLMMode(unittest.TestCase):
             mock_ui.write_log.assert_any_call("SYS: Ollama process connection refused.")
             # Assert no Gemini call
             self.assertIsNone(live.session)
+            live._loop.close()
 
     # ──────────────────────────────────────────────────────────────────────────
     # 8. Valid tool calls use Mark-LV's trusted dispatcher
@@ -774,6 +776,83 @@ class TestQwenModelConfiguration(unittest.TestCase):
             if k == "llm_model":
                 continue
             self.assertEqual(after.get(k), v, f"Setting '{k}' was unexpectedly modified.")
+
+    def test_fresh_startup_defaults_to_gemini_live(self):
+        from app.marklv.memory.config_manager import save_ai_engine, save_llm_model, get_ai_engine, get_llm_model
+
+        # Simulate prior session leaving Ollama mode active
+        save_ai_engine("Ollama")
+        save_llm_model("qwen2.5:7b")
+        self.assertEqual(get_ai_engine(), "Ollama")
+
+        # Simulate fresh launch in JarvisLive
+        from app.marklv.main import JarvisLive
+        mock_ui = MagicMock()
+        with patch.object(JarvisLive, "__init__", lambda self, ui: None):
+            live = JarvisLive(mock_ui)
+            live.ui = mock_ui
+            # Fresh launch default is applied
+            save_ai_engine("Gemini Live")
+
+        self.assertEqual(get_ai_engine(), "Gemini Live")
+        # Ensure configured local model is preserved
+        self.assertEqual(get_llm_model(), "qwen2.5:7b")
+
+    def test_typed_command_from_ui_avoids_duplicate_log(self):
+        mock_ui = MagicMock()
+        from app.marklv.main import JarvisLive
+
+        with patch.object(JarvisLive, "__init__", lambda self, ui: None):
+            live = JarvisLive(mock_ui)
+            live.ui = mock_ui
+            live._loop = asyncio.new_event_loop()
+            live._asst_name = "JARVIS"
+            live._session_log = []
+            live._dashboard = None
+            live._local_history = []
+
+            mock_coord = MagicMock()
+            mock_coord.execute_turn.return_value = LocalTurnResult(
+                status=TurnStatus.SUCCESS,
+                content="Response text.",
+                updated_history=[],
+            )
+            live._local_coordinator = mock_coord
+            live._action_registry = MagicMock()
+            live._action_registry.get_tool_declarations.return_value = []
+            live._plugin_registry = MagicMock()
+            live._plugin_registry.get_tool_declarations.return_value = []
+
+            with patch.object(live, "is_local_mode", return_value=True):
+                # 1. When typed from UI (from_ui=True), "You: ..." should NOT be written by coordinator
+                live._loop.run_until_complete(
+                    live._handle_local_text_command("hello", from_ui=True)
+                )
+                self.assertNotIn("You: hello", [c[0][0] for c in mock_ui.write_log.call_args_list])
+                mock_ui.write_log.assert_any_call("JARVIS: Response text.")
+
+                mock_ui.reset_mock()
+
+                # 2. When received from voice (from_ui=False), "You: ..." MUST be written
+                live._loop.run_until_complete(
+                    live._handle_local_text_command("hello voice", from_ui=False)
+                )
+                mock_ui.write_log.assert_any_call("You: hello voice")
+                mock_ui.write_log.assert_any_call("JARVIS: Response text.")
+            live._loop.close()
+
+    def test_local_mode_system_prompt_includes_voice_support(self):
+        mock_ui = MagicMock()
+        from app.marklv.main import JarvisLive
+
+        with patch.object(JarvisLive, "__init__", lambda self, ui: None):
+            live = JarvisLive(mock_ui)
+            live._asst_name = "JARVIS"
+            live._user_name = "User"
+            prompt = live._get_local_system_prompt()
+            self.assertIn("Voice input", prompt)
+            self.assertIn("spoken audio responses", prompt)
+            self.assertIn("Push-to-Talk", prompt)
 
 
 if __name__ == "__main__":
