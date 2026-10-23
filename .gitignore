@@ -56,3 +56,9 @@ old/
 *.bak
 api_keys.json
 app/marklv/config/api_keys.json
+
+# Certificates & Keys
+*.cer
+*.crt
+*.key
+app/marklv/config/certs/

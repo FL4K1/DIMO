@@ -26,6 +26,13 @@ from typing import Callable, Generator
 
 import requests
 
+# Guarantee that whether imported as 'core.llm_client' (Mark-LV runtime) or
+# 'app.marklv.core.llm_client' (DIMO integration / root tests), both paths
+# resolve to this exact same module instance.
+if __name__ in ("core.llm_client", "app.marklv.core.llm_client"):
+    sys.modules.setdefault("core.llm_client", sys.modules[__name__])
+    sys.modules.setdefault("app.marklv.core.llm_client", sys.modules[__name__])
+
 # Matches a sentence boundary: [.!?] followed by whitespace, or a blank line.
 # Avoids splitting on decimals (3.5) because those have no space after the dot.
 _SENT_END = re.compile(r'(?<=[.!?])\s+|(?<=\n)\s*\n')
@@ -41,7 +48,7 @@ CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 
 _DEFAULTS = {
     "llm_url":      "http://localhost:11434",
-    "llm_model":    "llama3.2",
+    "llm_model":    "qwen2.5:7b",
     "llm_provider": "ollama",   # "ollama" | "openai"
 }
 

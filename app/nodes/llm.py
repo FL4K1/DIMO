@@ -166,7 +166,8 @@ def call_llm(state: DimoState) -> DimoState:
             "Use memory context above naturally in conversation — never recite it like a list. "
             "CRITICAL: Never claim to have performed an action (like sending a message or playing music) "
             "UNLESS you see explicit confirmation in the TOOL RESULTS with success=True. "
-            "If no tools were run, or a tool failed, clearly inform the user that the action was not performed."
+            "If no tools were run, or a tool failed, clearly inform the user that the action was not performed. "
+            "If a tool result shows [CONFIRMATION_PENDING], inform the user in ONE short sentence that you have requested their confirmation on the HUD/screen and need their approval before proceeding."
         )
 
         # ── Build conversation context ────────────────────────────────────
@@ -196,8 +197,12 @@ def call_llm(state: DimoState) -> DimoState:
                     success = result_data.get("success", False)
                     result_msg = result_data.get("result", "")
                     error_msg = result_data.get("error", "")
-                    status = "SUCCESS" if success else f"FAILED: {error_msg}"
-                    result_str = f"[{status}] {result_msg}"
+                    if result_data.get("pending_confirmation"):
+                        status = "CONFIRMATION_PENDING"
+                        result_str = f"[{status}] {result_msg or error_msg}"
+                    else:
+                        status = "SUCCESS" if success else f"FAILED: {error_msg}"
+                        result_str = f"[{status}] {result_msg}"
                 else:
                     result_str = str(result_data)
                 args = call.get("args", {})

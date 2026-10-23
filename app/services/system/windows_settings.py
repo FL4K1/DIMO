@@ -122,7 +122,9 @@ class WindowsSettingsService:
             "dark_mode": self.dark_mode,
             "toggle_wifi": self.toggle_wifi,
             "restart": self.restart_computer,
+            "restart_computer": self.restart_computer,
             "shutdown": self.shutdown_computer,
+            "shutdown_computer": self.shutdown_computer,
         }
         
         if action in action_map:

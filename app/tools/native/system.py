@@ -10,29 +10,69 @@ def computer_settings(**kwargs) -> dict:
     """Adjust system settings (volume, brightness, power state, etc.)."""
     try:
         service = WindowsSettingsService()
-        action = kwargs.get("action", "")
+        action = str(kwargs.get("action", "")).lower().strip().replace(" ", "_").replace("-", "_")
         value = kwargs.get("value")
         
-        # Guard for dangerous actions using Mark-LV's confirm_gate
-        if action in ("restart", "shutdown"):
-            token = kwargs.get("token")
+        # Guard for dangerous actions using Mark-LV's confirm module
+        dangerous_restart = ("restart", "restart_computer")
+        dangerous_shutdown = ("shutdown", "shutdown_computer")
+
+        if action in dangerous_restart or action in dangerous_shutdown:
             try:
-                from core.confirm import confirm_gate
-                if not confirm_gate.verify(token):
-                    # Request UI confirmation banner
-                    confirm_gate.request(
-                        summary=f"Computer System {action.capitalize()}",
-                        detail=f"The assistant is attempting to {action} your computer.",
-                        on_confirm=lambda: service.execute_action(action, value),
-                        danger=True
-                    )
-                    return {
-                        "success": False,
-                        "result": "",
-                        "error": f"Confirmation required. A prompt has been displayed on the screen for human approval."
-                    }
+                import core.confirm as confirm
             except ImportError:
-                pass
+                try:
+                    from app.marklv.core import confirm
+                except ImportError:
+                    confirm = None
+
+            if confirm is None:
+                return {
+                    "success": False,
+                    "pending_confirmation": False,
+                    "result": "",
+                    "error": (
+                        f"Confirmation interface is unavailable. Cannot execute {action} "
+                        "without human confirmation."
+                    ),
+                }
+
+            if confirm.pending_title():
+                return {
+                    "success": False,
+                    "pending_confirmation": True,
+                    "result": (
+                        f"[CONFIRMATION_PENDING] A confirmation for '{confirm.pending_title()}' "
+                        "is already pending on the HUD."
+                    ),
+                    "error": f"Another confirmation ('{confirm.pending_title()}') is currently pending on the HUD.",
+                }
+
+            is_restart = action in dangerous_restart
+            canonical_key = "restart" if is_restart else "shutdown"
+            title = f"Computer {'Restart' if is_restart else 'Shutdown'}"
+            detail = f"The assistant requested to {'restart' if is_restart else 'shut down'} this computer."
+            req_msg = confirm.request(
+                key=canonical_key,
+                title=title,
+                detail=detail,
+                run=lambda: str(service.execute_action(action, value)),
+            )
+
+            if req_msg.startswith("[CONFIRMATION_PENDING]"):
+                return {
+                    "success": False,
+                    "pending_confirmation": True,
+                    "result": req_msg,
+                    "error": "Confirmation required on HUD before action can proceed.",
+                }
+            else:
+                return {
+                    "success": False,
+                    "pending_confirmation": False,
+                    "result": "",
+                    "error": req_msg,
+                }
                 
         result = service.execute_action(action, value)
         return {"success": True, "result": result, "error": ""}

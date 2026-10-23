@@ -35,10 +35,18 @@ WHAT BELONGS HERE AND WHAT DOES NOT
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional
+
+# Guarantee that whether imported as 'core.confirm' (Mark-LV runtime) or
+# 'app.marklv.core.confirm' (DIMO integration / root tests), both paths
+# resolve to this exact same module instance and share confirmation state.
+if __name__ in ("core.confirm", "app.marklv.core.confirm"):
+    sys.modules.setdefault("core.confirm", sys.modules[__name__])
+    sys.modules.setdefault("app.marklv.core.confirm", sys.modules[__name__])
 
 # A pending confirmation is abandoned after this long. Chosen to outlast a
 # normal "hang on, let me look at the screen" pause without leaving a live
